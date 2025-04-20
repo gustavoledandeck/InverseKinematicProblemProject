@@ -54,12 +54,15 @@ class TensorFlowModel:
         model = keras.Sequential()
 
         #input layer
-        model.add(tf.keras.layers.InputSpec(shape=(self.input_dimension,)))
+
+        model.add(keras.layers.Input(shape=(self.input_dimension,)))
 
         #Hidden layers
         for units in self.hidden_layers:
-            model.add(tf.keras.layers.Dense(units, activation=self.activation))
-            model.add(tf.keras.layers.BatchNormalization())
+
+            model.add(keras.layers.Dense(units, activation=self.activation))
+            model.add(keras.layers.BatchNormalization())
+
 
         #output layer
         model.add(tf.keras.layers.Dense(self.output_dimension))
@@ -115,39 +118,109 @@ class TensorFlowModel:
 
         return history.history
 
-    def predict(self):
+    def predict(self, X):
         """
         Predict joint angles for given end-effector positions.
 
-        Args: TO-DO
+        Args:
+            X (numpy.ndarray) : Input data (End-effector positions)
         :return:
+            numpy.ndarray : Predicted joint angles
         """
+        #Scale the input
+        X_scaled = self.input_scaler.transform(X)
 
 
-    def evaluate(self):
+        #Make predictions
+        start_time = time.time()
+        y_scaled_pred = self.model.predict(X_scaled)
+        inference_time = time.time() - start_time
+
+        #Inverse transform to get original scale
+        y_pred = self.output_scaler.inverse_transform(y_scaled_pred)
+
+        print(f"TF model inference time: {inference_time*1000:.2f} ms")
+
+        return y_pred
+    def evaluate(self, X, y_true):
         """
-        ARGS: TO-DO
+            Evaluate the model performance.
+
+            Args:
+                   X (numpy.ndarray) : Input data (end-effector positions)
+                   y_true (numpy.ndarray) : True joint angles
+
         :return:
+            dict : Evaluation metrics
+        """
+        # Predict joint angles
+        y_pred = self.predict(X)
+
+        # Calculate mean absolute error for each joint
+        mae_per_joint = np.mean(np.abs(y_true - y_pred), axis=0)
+
+        # Calculate overall mean absolute error
+        mae_overall = np.mean(mae_per_joint)
+
+        # Calculate Euclidean distance error in joint space
+        euclidean_error = np.sqrt(np.sum((y_true - y_pred) ** 2, axis=1))
+        mean_euclidean_error = np.mean(euclidean_error)
+
+        return {
+            'mae_per_joint': mae_per_joint,
+            'mae_overall': mae_overall,
+            'mean_euclidean_error': mean_euclidean_error,
+            'max_euclidean_error': np.max(euclidean_error)
+        }
+
+    def save(self, model_path):
+        """
+            Save the model to disk.
+
+        Args: model_path (str) : Path to save the model
+
+
         """
 
-    def save(self):
-        """
-        Save the model to disk.
+        #Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(model_path), exist_ok=True)
 
-        Args: TO-DO
-        :return:
+        #Save the model
+        self.model.save(model_path)
+
+        #Save scalers
+        np.save(os.path.join(os.path.dirname(model_path), 'input_scaler.npy'),
+                [self.input_scaler.data_min_, self.input_scaler.data_max_])
+        np.save(os.path.join(os.path.dirname(model_path), 'output_scaler.npy'),
+                [self.output_scaler.data_min_], self.output_scaler.data_max_)
+
+
+    def load(self, model_path):
+        """
+            Load the model from disk.
+
+            Args:
+                model_path (str) : Path to load the model from
+
         """
 
-    def load(self):
-        """
-        Load the model from disk.
+        #Load the model
+        self.model = keras.models.load_model(model_path)
 
-        TO-DO
-        :return:
-        """
+        #Load scalers
+        input_scaler_data = np.load(os.path.join(os.path.dirname(model_path), 'input_scaler.npy'))
+        output_scaler_data = np.load(os.path.join(os.path.dirname(model_path), 'output_scaler.npy'))
 
+        self.input_scaler.data_min_ = input_scaler_data[0]
+        self.input_scaler.data_max_ = input_scaler_data[1]
+        self.input_scaler.scale_ - 1.0 / (self.input_scaler.data_max_ - self.input_scaler.data_min_)
+
+        self.output_scaler.data_min_ = output_scaler_data[0]
+        self.output_scaler.data_max_ = output_scaler_data[1]
+        self.output_scaler.scale_ = 1.0 / (self.output_scaler.data_max_ - self.output_scaler.data_min_)
 
 class PyTorchModel:
+
     """
     NNA model for IK with tensorflow
     """
@@ -281,3 +354,32 @@ class ScikitLearnModel:
         """
 
 if __name__ == "__main__":
+    #Generate some random data to use in the models
+
+    np.random.seed(42)
+    X = np.random.rand(1000, 3) # END-EFFECTOR POSITIONS (X, Y, Z)
+    y = np.random.rand(1000, 4) # JOINT ANGLES (Theta 0, Theta 1, Theta 02,Theta 3)
+
+    #Split data into training and testing sets
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    #Create and train TF model
+    tf_model = TensorFlowModel(input_dimension=3, output_dimension=4)
+    tf_history = tf_model.train(X_train, y_train, epochs=50, batch_size=32, verbose=0)
+
+
+
+
+
+    #Evaluate models
+    tf_metrics = tf_model.evaluate(X_test, y_test)
+    #print(tf_metrics['mae_per_joint'])
+
+    print("\nTF Model Metrics: ")
+    print("MAE per Joint: ")
+    print(tf_metrics['mae_per_joint'])
+    print("\n")
+    print("Mean Euclidean Error: ")
+    print(tf_metrics['mean_euclidean_error'])
+
+
