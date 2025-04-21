@@ -1,0 +1,2 @@
+Framework,Training Time (s),Inference Time (ms),Mean Error (mm),Max Error (mm),Accuracy < 0.5mm (%)
+tensorflow,4.519552707672119,72.71289825439453,236.82591541308847,485.7005602676251,0.0

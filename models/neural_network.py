@@ -211,9 +211,11 @@ class TensorFlowModel:
         input_scaler_data = np.load(os.path.join(os.path.dirname(model_path), 'input_scaler.npy'))
         output_scaler_data = np.load(os.path.join(os.path.dirname(model_path), 'output_scaler.npy'))
 
+
+
         self.input_scaler.data_min_ = input_scaler_data[0]
         self.input_scaler.data_max_ = input_scaler_data[1]
-        self.input_scaler.scale_ - 1.0 / (self.input_scaler.data_max_ - self.input_scaler.data_min_)
+        self.input_scaler.scale_ = 1.0 / (self.input_scaler.data_max_ - self.input_scaler.data_min_)
 
         self.output_scaler.data_min_ = output_scaler_data[0]
         self.output_scaler.data_max_ = output_scaler_data[1]
