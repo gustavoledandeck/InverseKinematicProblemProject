@@ -12,7 +12,7 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 from utils.Forward_kinematics import ForwardKinematics
 from utils.data_for_simulation import DataGenerator
-from models.neural_network import TensorFlowModel
+from models.neural_network import TensorFlowModel, ScikitLearnModel, PyTorchModel
 
 #Get the directory of the current script
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -61,6 +61,14 @@ class OptimizedInverseKinematics:
         if framework == 'tensorflow':
             self.model = TensorFlowModel(input_dimension=input_dimension, output_dimension=output_dimension,
                                          hidden_layers=self.hidden_layers)
+        elif framework == 'sklearn':
+            self.model = ScikitLearnModel(input_dimension=input_dimension, output_dimension=output_dimension,
+                                         hidden_layers=self.hidden_layers)
+        elif framework == 'pytorch':
+            self.model = PyTorchModel(input_dimension=input_dimension, output_dimension=output_dimension,
+                                         hidden_layers=self.hidden_layers)
+
+
         else:
             raise ValueError("Invalid framework. Choose 'tensorflow' or 'sklearn'")
 
@@ -202,6 +210,9 @@ class OptimizedInverseKinematics:
         if self.framework == 'tensorflow':
             if not (model_path.endswith('.keras') or model_path.endswith('.h5')):
                 model_path = f"{model_path}.keras"
+        elif self.framework == 'pytorch':
+            if not model_path.endswith('.pt'):
+                model_path = f"{model_path}.pt"
         elif self.framework == 'sklearn':
             if not model_path.endswith('.joblib'):
                 model_path = f"{model_path}.joblib"
@@ -358,12 +369,12 @@ if __name__ == "__main__":
     results = []
 
     #Test 3-DOF models with optimized parameters
-    for framework in ['tensorflow']:
+    for framework in ['tensorflow', 'sklearn', 'pytorch']:
         result = run_optimized_test(framework=framework, dof=3, num_samples=5000, epochs=50)
         results.append(result)
 
     #Test 4-DOF models with optimized parameters
-    for framework in ['tensorflow']:
+    for framework in ['tensorflow', 'sklearn', 'pytorch']:
         result = run_optimized_test(framework=framework, dof=4, num_samples=5000, epochs=50)
         results.append(result)
 

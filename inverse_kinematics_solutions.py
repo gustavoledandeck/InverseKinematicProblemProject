@@ -14,7 +14,7 @@ from utils.Forward_kinematics import ForwardKinematics
 from models.neural_network import TensorFlowModel
 from utils.Forward_kinematics import ForwardKinematics
 from utils.data_for_simulation import DataGenerator
-from models.neural_network import TensorFlowModel
+from models.neural_network import TensorFlowModel, PyTorchModel, ScikitLearnModel
 
 
 class InverseKinematics4DOF:
@@ -43,6 +43,11 @@ class InverseKinematics4DOF:
         #Initialize neural netwrok model
         if model_type == 'tensorflow':
             self.model = TensorFlowModel(input_dimension=3, output_dimension=4)
+        elif model_type == 'pytorch':
+            self.model = PyTorchModel(input_dimension=3, output_dimension=4)
+        elif model_type == 'sklearn':
+            self.model = ScikitLearnModel(input_dimension=3, output_dimension=4)
+
         else:
             raise ValueError("Invalid model type")
 
@@ -231,6 +236,10 @@ class InverseKinematics3DOF:
         # Initialize neural network model
         if model_type == 'tensorflow':
             self.model = TensorFlowModel(input_dimension=2, output_dimension=3)
+        elif model_type == 'pytorch':
+            self.model = PyTorchModel(input_dimension=2, output_dimension=3)
+        elif model_type == 'sklearn':
+            self.model = ScikitLearnModel(input_dimension=2, output_dimension=3)
         else:
             raise ValueError("Invalid model type. Choose 'tensorflow', 'pytorch', or 'sklearn'.")
 

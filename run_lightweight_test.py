@@ -10,7 +10,8 @@ import pandas as pd
 
 from utils.Forward_kinematics import ForwardKinematics
 from utils.data_for_simulation import DataGenerator
-from models.neural_network import TensorFlowModel
+from models.neural_network import TensorFlowModel, PyTorchModel, ScikitLearnModel
+
 
 class SimpleInverseKinematics:
     """
@@ -39,6 +40,11 @@ class SimpleInverseKinematics:
 
         if framework == 'tensorflow':
             self.model = TensorFlowModel(input_dimension=input_dimension, output_dimension=output_dimension)
+        elif framework == 'pytorch':
+            self.model = PyTorchModel(input_dimension=input_dimension, output_dimension=output_dimension)
+        elif framework == 'sklearn':
+            self.model = ScikitLearnModel(input_dimension=input_dimension, output_dimension=output_dimension)
+
         else:
             raise ValueError("Invalid framework. Choose 'tensorflow', 'pytorch', or 'sklearn'.")
 
@@ -129,6 +135,12 @@ class SimpleInverseKinematics:
         if self.framework == 'tensorflow':
             if not (model_path.endswith('.keras') or model_path.endswith('.h5')):
                 model_path = f"{model_path}.keras"
+        elif self.framework == 'pytorch':
+            if not model_path.endswith('.pt'):
+                model_path = f"{model_path}.pt"
+        elif self.framework == 'sklearn':
+            if not model_path.endswith('.joblib'):
+                model_path = f"{model_path}.joblib"
 
         #Create directory
         os.makedirs(os.path.dirname(model_path), exist_ok=True)
@@ -255,12 +267,12 @@ if __name__ == "__main__":
     results = []
 
     #Test 3-DOF models
-    for framework in ['tensorflow']:
+    for framework in ['tensorflow', 'sklearn', 'pytorch']:
         result = run_lightweight_test(framework=framework, dof=3)
         results.append(result)
 
     #Test 4-DOF models
-    for framework in ['tensorflow']:
+    for framework in ['tensorflow', 'sklearn', 'pytorch']:
         result = run_lightweight_test(framework=framework, dof=4)
         results.append(result)
 

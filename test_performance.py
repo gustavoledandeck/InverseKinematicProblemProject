@@ -111,7 +111,7 @@ def train_and_evaluate_models(train_epochs=100, num_samples=10000, test_points=1
     #os.makedirs(f'{trained_models_dir}', exist_ok=True)
 
     #Train and evaluate 4-DOF models
-    for framework in ['tensorflow']:
+    for framework in ['tensorflow', 'pytorch', 'sklearn']:
         print(f"\nTraining 4-DOF model using {framework}...")
 
         #Create and train model
@@ -170,7 +170,7 @@ def train_and_evaluate_models(train_epochs=100, num_samples=10000, test_points=1
         print(f"  Accuracy < 0.5mm: {accuracy_percentage:.2f}%")
 
     #Train and evaluate 3-DOF models
-    for framework in ['tensorflow']:
+    for framework in ['tensorflow', 'pytorch', 'sklearn']:
         print(f"\nTraining 3-DOF model using {framework}...")
 
         #Create and train model
@@ -366,4 +366,4 @@ if __name__ == "__main__":
     plot_results(results_4dof, results_3dof)
 
     # Visualize test cases
-    visualize_test_cases(num_cases=2)  # Reduced for testing
+    #visualize_test_cases(num_cases=2)  # Reduced for testing

@@ -677,33 +677,29 @@ class ScikitLearnModel:
 
 
 if __name__ == "__main__":
-    #Generate some random data to use in the models
+    # Generate some random data to use in the models
 
     np.random.seed(42)
-    X = np.random.rand(1000, 3) # END-EFFECTOR POSITIONS (X, Y, Z)
-    y = np.random.rand(1000, 4) # JOINT ANGLES (Theta 0, Theta 1, Theta 02,Theta 3)
 
-    #Split data into training and testing sets
+    X = np.random.rand(1000, 3)  # END-EFFECTOR POSITIONS (X, Y, Z)
+
+    y = np.random.rand(1000, 4)  # JOINT ANGLES (Theta 0, Theta 1, Theta 02,Theta 3)
+
+    # Split data into training and testing sets
+
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-    #Create and train TF model
+    # Create and train TF model
+
     tf_model = TensorFlowModel(input_dimension=3, output_dimension=4)
+
     tf_history = tf_model.train(X_train, y_train, epochs=50, batch_size=32, verbose=0)
 
-    #Create and train PyTorch model
-    pt_model = PyTorchModel(input_dimension=3, output_dimension=4)
-    pt_history = pt_model.train(X_train, y_train, epochs=50, batch_size=32, verbose=0)
+    # Evaluate models
 
-    #Create and train scikit-learn model
-    sklearn_model = ScikitLearnModel(input_dimension=3, output_dimension=4)
-    sklearn_history = sklearn_model.train(X_train, y_train)
-
-
-
-    #Evaluate models
     tf_metrics = tf_model.evaluate(X_test, y_test)
-    pt_metrics = pt_model.evaluate(X_test, y_test)
-    sklearn_metrics = sklearn_model.evaluate(X_test, y_test)
+
+
 
 
     print("\nTF Model Metrics: ")
@@ -715,7 +711,7 @@ if __name__ == "__main__":
     print(f"MAE per joint: {tf_metrics['mae_per_joint']}")
     print(f"Overall MAE: {tf_metrics['mae_overall']:.4f}")
     print(f"Mean Euclidean Error: {tf_metrics['mean_euclidean_error']:.4f}")
-
+    """
     print("\nPyTorch Model Metrics:")
     print(f"MAE per joint: {pt_metrics['mae_per_joint']}")
     print(f"Overall MAE: {pt_metrics['mae_overall']:.4f}")
@@ -725,4 +721,4 @@ if __name__ == "__main__":
     print(f"MAE per joint: {sklearn_metrics['mae_per_joint']}")
     print(f"Overall MAE: {sklearn_metrics['mae_overall']:.4f}")
     print(f"Mean Euclidean Error: {sklearn_metrics['mean_euclidean_error']:.4f}")
-
+    """
