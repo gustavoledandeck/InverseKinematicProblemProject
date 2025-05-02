@@ -123,7 +123,7 @@ def train_and_evaluate_models(train_epochs=100, num_samples=10000, test_points=1
             X_train_4dof, y_train_4dof,
             epochs=train_epochs,
             batch_size=64,
-            verbose=1
+            verbose=2
         )
         training_time = time.time() - start_time
 
@@ -182,7 +182,7 @@ def train_and_evaluate_models(train_epochs=100, num_samples=10000, test_points=1
             X_train_3dof, y_train_3dof,
             epochs=train_epochs,
             batch_size=64,
-            verbose=1
+            verbose=2
         )
         training_time = time.time() - start_time
 
@@ -362,9 +362,9 @@ if __name__ == "__main__":
 
 
     results_4dof, results_3dof = train_and_evaluate_models(
-            train_epochs=500,
-            num_samples=30000,
-            test_points=6000
+            train_epochs=300,
+            num_samples=20000,
+            test_points=100
         )
 
     """

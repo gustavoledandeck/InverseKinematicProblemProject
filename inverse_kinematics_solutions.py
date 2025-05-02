@@ -44,11 +44,11 @@ class InverseKinematics4DOF:
 
         #Initialize neural netwrok model
         if model_type == 'tensorflow':
-            self.model = TensorFlowModel(input_dimension=3, output_dimension=4)
+            self.model = TensorFlowModel(input_dimension=3, output_dimension=4, activation='swish')
         elif model_type == 'pytorch':
-            self.model = PyTorchModel(input_dimension=3, output_dimension=4)
+            self.model = PyTorchModel(input_dimension=3, output_dimension=4, activation='')
         elif model_type == 'sklearn':
-            self.model = ScikitLearnModel(input_dimension=3, output_dimension=4)
+            self.model = ScikitLearnModel(input_dimension=3, output_dimension=4, activation='relu')
 
         else:
             raise ValueError("Invalid model type")
@@ -459,7 +459,7 @@ if __name__ == "__main__":
     X_4dof, y_4dof = ik_4dof.generate_training_data(num_samples=1000)
 
     #Train the model with a small number of epochs for testing
-    history_4dof, metrics_4dof = ik_4dof.train(X_4dof, y_4dof, epochs=10, verbose=1)
+    history_4dof, metrics_4dof = ik_4dof.train(X_4dof, y_4dof, epochs=10, verbose=2)
 
     #Test prediction
     target_position_4dof = [150, 100, 50]  # Example target position
@@ -483,7 +483,7 @@ if __name__ == "__main__":
     X_3dof, y_3dof = ik_3dof.generate_training_data(num_samples=1000)
 
     #Train the model with a small number of epochs for testing
-    history_3dof, metrics_3dof = ik_3dof.train(X_3dof, y_3dof, epochs=10, verbose=1)
+    history_3dof, metrics_3dof = ik_3dof.train(X_3dof, y_3dof, epochs=10, verbose=2)
 
     #Test prediction
     target_position_3dof = [150, 100]  # Example target position

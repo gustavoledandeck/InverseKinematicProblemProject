@@ -247,7 +247,7 @@ class PyTorchModel:
         NNA model for IK with PyTorch.
     """
 
-    def __init__(self, input_dimension, output_dimension, hidden_layers=[128, 256, 128], activation='relu'):
+    def __init__(self, input_dimension, output_dimension, hidden_layers=[256, 512, 256], activation='swish'):
         """
             Initialize the PyTorch model.
 
@@ -267,7 +267,8 @@ class PyTorchModel:
         elif activation == 'tanh':
             self.activation = nn.Tanh()
         else:
-            self.activation = nn.Sigmoid()
+            self.activation = nn.GELU()
+
 
         # Create input and output scalers
         self.input_scaler = MinMaxScaler()
@@ -349,7 +350,7 @@ class PyTorchModel:
 
         #Early stopping parameters
         best_val_loss = float('inf')
-        patience = 10
+        patience = 50
         patience_counter = 0
         best_model_state = None
 
@@ -531,7 +532,7 @@ class ScikitLearnModel:
         Neural network model for IK using scikit-learn.
     """
 
-    def __init__(self, input_dimension, output_dimension, hidden_layers=[128, 256, 128], activation='relu'):
+    def __init__(self, input_dimension, output_dimension, hidden_layers=[256, 512, 256], activation='relu'):
         """
         Initialize the tensorflow model.
 
@@ -559,7 +560,7 @@ class ScikitLearnModel:
             batch_size='auto',
             learning_rate='adaptive',
             learning_rate_init=0.001,
-            max_iter=200,
+            max_iter=300,
             shuffle=True,
             random_state=42,
             early_stopping=True,
@@ -711,7 +712,7 @@ if __name__ == "__main__":
 
     tf_model = TensorFlowModel(input_dimension=3, output_dimension=4)
 
-    tf_history = tf_model.train(X_train, y_train, epochs=500, batch_size=64, verbose=1)
+    tf_history = tf_model.train(X_train, y_train, epochs=500, batch_size=64, verbose=2)
 
     # Evaluate models
 
