@@ -122,8 +122,8 @@ def train_and_evaluate_models(train_epochs=100, num_samples=10000, test_points=1
         history, metrics = model_4dof.train(
             X_train_4dof, y_train_4dof,
             epochs=train_epochs,
-            batch_size=32,
-            verbose=0
+            batch_size=64,
+            verbose=1
         )
         training_time = time.time() - start_time
 
@@ -181,8 +181,8 @@ def train_and_evaluate_models(train_epochs=100, num_samples=10000, test_points=1
         history, metrics = model_3dof.train(
             X_train_3dof, y_train_3dof,
             epochs=train_epochs,
-            batch_size=32,
-            verbose=0
+            batch_size=64,
+            verbose=1
         )
         training_time = time.time() - start_time
 
@@ -314,12 +314,13 @@ def visualize_test_cases(num_cases=3):
     #Create results directory
     os.makedirs(f'{results_dir}/visualizations', exist_ok=True)
 
-    #Load the best models (assuming TensorFlow models are the best)
-    model_4dof = InverseKinematics4DOF(model_type='tensorflow')
-    model_4dof.load_model(f'{trained_models_dir}/model_4dof_tensorflow.keras')
+    #Load the best models (to do: increment a func to receive best MAE and load the model)
 
-    model_3dof = InverseKinematics3DOF(model_type='tensorflow')
-    model_3dof.load_model(f'{trained_models_dir}/model_3dof_tensorflow.keras')
+    model_4dof = InverseKinematics4DOF(model_type='pytorch')
+    model_4dof.load_model(f'{trained_models_dir}/optimized_model_4dof_pytorch.pt')
+
+    model_3dof = InverseKinematics3DOF(model_type='pytorch')
+    model_3dof.load_model(f'{trained_models_dir}/optimized_model_3dof_pytorch.pt')
 
     #Visualize 4-DOF test cases
     for i, point in enumerate(points_4dof):
@@ -350,20 +351,33 @@ def visualize_test_cases(num_cases=3):
         print(f"  Error: {error:.4f} mm")
 
 
+
+
 if __name__ == "__main__":
     # Create results directory
     os.makedirs(f'{results_dir}', exist_ok=True)
 
     # Train and evaluate models with reduced parameters for testing
     # In a real scenario, you would use more epochs and samples
-    results_4dof, results_3dof = train_and_evaluate_models(
-        train_epochs=20,  # Reduced for testing
-        num_samples=2000,  # Reduced for testing
-        test_points=5  # Reduced for testing
-    )
 
-    # Plot results
+
+    results_4dof, results_3dof = train_and_evaluate_models(
+            train_epochs=500,
+            num_samples=30000,
+            test_points=6000
+        )
+
+    """
+        ik_solver = InverseKinematics4DOF()
+        ik_solver.train(num_samples=10000)
+        angles = ik_solver.predict([150, 100, 50])
+        fig = ik_solver.visualize_prediction([150, 100, 50], angles)
+        fig.savefig('arm_configuration.png')
+    """
+
+    #Plot results
     plot_results(results_4dof, results_3dof)
 
-    # Visualize test cases
-    #visualize_test_cases(num_cases=2)  # Reduced for testing
+
+    #visualize_test_cases(num_cases=3)  # Reduced for testing
+    #visualize_test_cases(num_cases=3)

@@ -20,7 +20,7 @@ class TensorFlowModel:
     NNA model for IK with tensorflow
     """
 
-    def __init__(self, input_dimension, output_dimension, hidden_layers=[128, 256, 128], activation='relu'):
+    def __init__(self, input_dimension, output_dimension, hidden_layers=[256, 512, 256], activation='swish'):
         """
             This is the constructor of TF model.
             Initialize the tensorflow model.
@@ -55,6 +55,7 @@ class TensorFlowModel:
 
         model = keras.Sequential()
 
+
         #input layer
 
         model.add(keras.layers.Input(shape=(self.input_dimension,)))
@@ -65,20 +66,29 @@ class TensorFlowModel:
             model.add(keras.layers.Dense(units, activation=self.activation))
             model.add(keras.layers.BatchNormalization())
 
+            #Add dropout
+            model.add(keras.layers.Dropout(0.3))
+
 
         #output layer
-        model.add(tf.keras.layers.Dense(self.output_dimension))
+        model.add(keras.layers.Dense(self.output_dimension))
 
         #compile
         model.compile(
-            optimizer=keras.optimizers.Adam(learning_rate=0.001),
-            loss='mse',
-            metrics=['mae']
+            optimizer=keras.optimizers.Adam(
+                learning_rate=keras.optimizers.schedules.ExponentialDecay(
+                    initial_learning_rate=0.001,
+                    decay_steps=10000,
+                    decay_rate=0.9
+                )
+            ),
+                loss='mse',
+                metrics=['mae']
 
         )
 
         return model
-    def train(self, X, y, epochs=100, batch_size=32, validation_split=0.2, verbose=1):
+    def train(self, X, y, epochs=100, batch_size=32, validation_split=0.2, verbose=1, callbacks=None):
         """
         Train the model on the provided dataset.
 
@@ -98,6 +108,20 @@ class TensorFlowModel:
         X_scaled = self.input_scaler.fit_transform(X)
         y_scaled = self.output_scaler.fit_transform(y)
 
+        # Handle callbacks
+        default_callbacks = [
+            keras.callbacks.EarlyStopping(
+                monitor='val_loss',
+                patience=10,
+                restore_best_weights=True
+            )
+        ]
+
+        if callbacks is None:
+            callbacks = default_callbacks
+        elif isinstance(callbacks, list):
+            callbacks = default_callbacks + callbacks
+
         #Train the model
         start_time = time.time()
         history = self.model.fit(
@@ -106,13 +130,7 @@ class TensorFlowModel:
             batch_size=batch_size,
             validation_split=validation_split,
             verbose=verbose,
-            callbacks=[
-                keras.callbacks.EarlyStopping(
-                    monitor='val_loss',
-                    patience=10,
-                    restore_best_weights=True
-                )
-            ]
+            callbacks=callbacks
         )
         training_time = time.time() - start_time
 
@@ -693,7 +711,7 @@ if __name__ == "__main__":
 
     tf_model = TensorFlowModel(input_dimension=3, output_dimension=4)
 
-    tf_history = tf_model.train(X_train, y_train, epochs=50, batch_size=32, verbose=0)
+    tf_history = tf_model.train(X_train, y_train, epochs=500, batch_size=64, verbose=1)
 
     # Evaluate models
 

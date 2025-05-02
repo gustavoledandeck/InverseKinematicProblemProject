@@ -9,6 +9,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import time
 from sklearn.model_selection import train_test_split
+from models.ikpy_visualizer import IKPyVisualizer
 
 from utils.Forward_kinematics import ForwardKinematics
 from models.neural_network import TensorFlowModel
@@ -35,6 +36,7 @@ class InverseKinematics4DOF:
 
         self.link_lengths = link_lengths if link_lengths is not None else [50, 100, 100, 100]
         self.model_type = model_type
+        self.ikpy_visualizer = IKPyVisualizer(link_lengths=self.link_lengths)
 
         #Initialize forward kinematics and data generator
         self.fk = ForwardKinematics(link_lengths=self.link_lengths)
@@ -66,7 +68,11 @@ class InverseKinematics4DOF:
 
         """
         print(f"Generating {num_samples} training samples for 4-DOF model ...")
-        return self.data_gen.generate_dataset_4dof(num_samples)
+        #return self.data_gen.generate_dataset_4dof(num_samples)
+        # Combine grid and random sampling
+        X_grid, y_grid = self.data_gen.generate_grid_dataset_4dof(grid_size=20)
+        X_rand, y_rand = self.data_gen.generate_dataset_4dof(num_samples)
+        return np.vstack([X_grid, X_rand]), np.vstack([y_grid, y_rand])
 
     def train(self, X=None, y=None, num_samples=1000, epochs=100, batch_size=32, validation_split=0.2,verbose=1):
         """
@@ -152,6 +158,30 @@ class InverseKinematics4DOF:
 
         return error
 
+    def newton_raphson_minimization(self, target_pos, initial_angles, max_iter=100, tol=1e-3):
+        angles = np.array(initial_angles)
+        for _ in range(max_iter):
+            # Calculate current position
+            x, y, z = self.fk.forward_kinematics_4dof(angles)
+            error = np.array(target_pos) - np.array([x, y, z])
+
+            if np.linalg.norm(error) < tol:
+                break
+
+            # Numerical Jacobian calculation
+            jacobian = np.zeros((3, 4))
+            epsilon = 1e-6
+            for j in range(4):
+                angles_perturbed = angles.copy()
+                angles_perturbed[j] += epsilon
+                x_p, y_p, z_p = self.fk.forward_kinematics_4dof(angles_perturbed)
+                jacobian[:, j] = (np.array([x_p, y_p, z_p]) - np.array([x, y, z])) / epsilon
+
+            # Update angles
+            angles += 0.1 * np.linalg.pinv(jacobian) @ error
+
+        return angles
+
     def save_model(self, model_path):
         """
             Save the trained model to disk.
@@ -188,27 +218,46 @@ class InverseKinematics4DOF:
         :return:
             matplotlib.figure: Figure object with the visualization
         """
-        #Calculate forward kinematics for the predicted angles
-        x, y, z = self.fk.forward_kinematics_4dof(predicted_angles)
 
-        #Calculate error
+        #Convert target position to meters
+        target = np.array(end_effector_position) / 1000
+
+        # Calculate error
         error = self.verify_accuracy(end_effector_position, predicted_angles)
 
-        #Visualize the arm configuration
-        fig = self.fk.visualize_arm_4dof(predicted_angles)
+        """
+            #Calculate forward kinematics for the predicted angles
+            x, y, z = self.fk.forward_kinematics_4dof(predicted_angles)
+    
+            #Calculate error
+            error = self.verify_accuracy(end_effector_position, predicted_angles)
+    
+            #Visualize the arm configuration
+            fig = self.fk.visualize_arm_4dof(predicted_angles)
+    
+            #Add target position
+            ax = fig.axes[0]
+            ax.scatter(end_effector_position[0], end_effector_position[1], end_effector_position[2],
+                       color='red', marker='x', s=100, label='Target')
+    
+            #Add predicted position
+            ax.scatter(x, y, z, color='green', marker='o', s=100, label='Predicted')
+    
+            #Update title with error information
+            ax.set_title(f'4-DOF Arm Configuration Error: {error:.2f} mm')
+            ax.legend()
+        """
+        #Create visualization
+        fig = self.ikpy_visualizer.visualize(
+            angles=predicted_angles,
+            target=target
+        )
 
-        #Add target position
+
+
+        #Add title with error
         ax = fig.axes[0]
-        ax.scatter(end_effector_position[0], end_effector_position[1], end_effector_position[2],
-                   color='red', marker='x', s=100, label='Target')
-
-        #Add predicted position
-        ax.scatter(x, y, z, color='green', marker='o', s=100, label='Predicted')
-
-        #Update title with error information
         ax.set_title(f'4-DOF Arm Configuration\nError: {error:.2f} mm')
-        ax.legend()
-
         return fig
 
 class InverseKinematics3DOF:

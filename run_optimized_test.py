@@ -9,6 +9,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import time
 import pandas as pd
+import keras
 from sklearn.model_selection import train_test_split
 from utils.Forward_kinematics import ForwardKinematics
 from utils.data_for_simulation import DataGenerator
@@ -131,6 +132,11 @@ class OptimizedInverseKinematics:
         if X is None or y is None:
             X, y = self.generate_training_data(num_samples)
 
+            # Add noise to inputs for robustness
+            X_noisy = X + np.random.normal(0, 0.01, X.shape)
+            X = np.vstack([X, X_noisy])
+            y = np.vstack([y, y])
+
         #Split data into training and testing sets
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
@@ -138,9 +144,30 @@ class OptimizedInverseKinematics:
         print(f"Training optimized {self.dof}-DOF model using {self.framework}...")
         print(f"Network architecture: {self.hidden_layers}")
 
+        callbacks = [
+            keras.callbacks.ReduceLROnPlateau(
+                monitor='val_loss',
+                factor=0.5,
+                patience=5,
+                min_lr=1e-6
+            ),
+            keras.callbacks.EarlyStopping(
+                monitor='val_loss',
+                patience=15,
+                restore_best_weights=True
+            )
+        ]
+
         start_time = time.time()
-        history = self.model.train(X_train, y_train, epochs=epochs, batch_size=batch_size,
-                                   validation_split=0.2, verbose=verbose)
+
+        history = self.model.train(
+            X, y,
+            epochs=epochs,
+            batch_size=batch_size,
+            validation_split=0.2,
+            verbose=verbose,
+            callbacks=callbacks
+        )
         training_time = time.time() - start_time
 
         # Evaluate the model
@@ -292,7 +319,7 @@ def run_optimized_test(framework='tensorflow', dof=3, num_samples=5000, epochs=5
 
     #Train model
     start_time = time.time()
-    history, _ = model.train(X, y, epochs=epochs, batch_size=32, verbose=1)
+    history, _ = model.train(X, y, epochs=epochs, batch_size=64, verbose=1)
     training_time = time.time() - start_time
 
     #Generate test points

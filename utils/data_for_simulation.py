@@ -74,14 +74,16 @@ class DataGenerator:
         y = np.zeros((num_samples, 4))  # Joint angles (θ0, θ1, θ2, θ3)
 
         for i in range(num_samples):
-            # Generate random joint angles
-            angles = self.generate_random_angles(4)
-            y[i] = angles
+            while True:
+                angles = self.generate_random_angles(4)
+                x, y_pos, z = self.fk.forward_kinematics_4dof(angles)
 
-            # Calculate forward kinematics
-            x, y_pos, z = self.fk.forward_kinematics_4dof(angles)
-
-            X[i] = [x, y_pos, z]
+                # Filter out positions too close to base or singularities
+                dist_from_base = np.sqrt(x ** 2 + y_pos ** 2 + z ** 2)
+                if dist_from_base > 50:  # Minimum 50mm from base
+                    y[i] = angles
+                    X[i] = [x, y_pos, z]
+                    break
 
         return X, y
 
