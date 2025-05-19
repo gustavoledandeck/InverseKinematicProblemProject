@@ -362,9 +362,9 @@ if __name__ == "__main__":
 
 
     results_4dof, results_3dof = train_and_evaluate_models(
-            train_epochs=300,
+            train_epochs=1000,
             num_samples=20000,
-            test_points=100
+            test_points=4000
         )
 
     """

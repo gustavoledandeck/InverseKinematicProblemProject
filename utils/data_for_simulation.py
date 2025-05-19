@@ -59,6 +59,8 @@ class DataGenerator:
             angles[i] = np.random.uniform(min_angle, max_angle)
         return angles
 
+
+
     def generate_dataset_4dof(self, num_samples):
         """
         Generate dataset for 4-DOF robotic arm (3D space).
@@ -86,6 +88,52 @@ class DataGenerator:
                     break
 
         return X, y
+
+    def generate_grid_dataset_4dof(self, grid_size=20):
+        total_length = sum(self.link_lengths)
+        x_range = np.linspace(-total_length, total_length, grid_size)
+        y_range = np.linspace(-total_length, total_length, grid_size)
+        z_range = np.linspace(0, total_length, grid_size)
+        X_valid = []
+        y_valid = []
+        for x in x_range:
+            for y in y_range:
+                for z in z_range:
+                    dist = np.sqrt(x ** 2 + y ** 2 + z ** 2)
+                    if 50 <= dist <= total_length:
+                        for _ in range(5):  # Try multiple configurations
+                            angles = self.generate_random_angles(4)
+                            refined_angles = self.refine_angles_4dof(angles, [x, y, z])
+                            x_pos, y_pos, z_pos = self.fk.forward_kinematics_4dof(refined_angles)
+                            error = np.sqrt((x - x_pos) ** 2 + (y - y_pos) ** 2 + (z - z_pos) ** 2)
+                            if error < 1.0:
+                                X_valid.append([x, y, z])
+                                y_valid.append(refined_angles)
+                                break
+        return np.array(X_valid), np.array(y_valid)
+
+    def refine_angles_4dof(self, initial_angles, target_position, max_iterations=100, learning_rate=0.01):
+        angles = np.array(initial_angles)
+        target_x, target_y, target_z = target_position
+        for _ in range(max_iterations):
+            x, y, z = self.fk.forward_kinematics_4dof(angles)
+            error = np.array([target_x - x, target_y - y, target_z - z])
+            if np.linalg.norm(error) < 0.1:
+                break
+            jacobian = np.zeros((3, 4))
+            epsilon = 1e-6
+            for j in range(4):
+                angles_perturbed = angles.copy()
+                angles_perturbed[j] += epsilon
+                x_p, y_p, z_p = self.fk.forward_kinematics_4dof(angles_perturbed)
+                jacobian[:, j] = (np.array([x_p, y_p, z_p]) - np.array([x, y, z])) / epsilon
+            try:
+                angles += learning_rate * np.linalg.pinv(jacobian) @ error
+                for j in range(4):
+                    angles[j] = np.clip(angles[j], self.angle_limits[j][0], self.angle_limits[j][1])
+            except np.linalg.LinAlgError:
+                angles += np.random.uniform(-0.1, 0.1, 4)
+        return angles
 
     def generate_dataset_3dof(self, num_samples):
         """

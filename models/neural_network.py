@@ -20,7 +20,7 @@ class TensorFlowModel:
     NNA model for IK with tensorflow
     """
 
-    def __init__(self, input_dimension, output_dimension, hidden_layers=[256, 512, 256], activation='swish'):
+    def __init__(self, input_dimension, output_dimension, hidden_layers=[32, 64, 32], activation='relu'):
         """
             This is the constructor of TF model.
             Initialize the tensorflow model.
@@ -88,7 +88,7 @@ class TensorFlowModel:
         )
 
         return model
-    def train(self, X, y, epochs=100, batch_size=32, validation_split=0.2, verbose=1, callbacks=None):
+    def train(self, X, y, epochs=1000, batch_size=64, validation_split=0.2, verbose=1, callbacks=None):
         """
         Train the model on the provided dataset.
 
@@ -112,7 +112,7 @@ class TensorFlowModel:
         default_callbacks = [
             keras.callbacks.EarlyStopping(
                 monitor='val_loss',
-                patience=10,
+                patience=30,
                 restore_best_weights=True
             )
         ]
@@ -247,7 +247,7 @@ class PyTorchModel:
         NNA model for IK with PyTorch.
     """
 
-    def __init__(self, input_dimension, output_dimension, hidden_layers=[256, 512, 256], activation='swish'):
+    def __init__(self, input_dimension, output_dimension, hidden_layers=[32, 64, 32], activation='relu'):
         """
             Initialize the PyTorch model.
 
@@ -297,6 +297,7 @@ class PyTorchModel:
         layers.append(self.activation)
         layers.append(nn.BatchNorm1d(self.hidden_layers[0]))
 
+
         # Hidden layers
         for i in range(len(self.hidden_layers) - 1):
             layers.append(nn.Linear(self.hidden_layers[i], self.hidden_layers[i + 1]))
@@ -308,7 +309,7 @@ class PyTorchModel:
 
         return nn.Sequential(*layers)
 
-    def train(self, X, y, epochs=100, batch_size=32, validation_split=0.2, verbose=1):
+    def train(self, X, y, epochs=1000, batch_size=64, validation_split=0.2, verbose=1):
         """
             Train the model on the provided dataset.
 
@@ -350,7 +351,7 @@ class PyTorchModel:
 
         #Early stopping parameters
         best_val_loss = float('inf')
-        patience = 50
+        patience = 30
         patience_counter = 0
         best_model_state = None
 
@@ -532,7 +533,7 @@ class ScikitLearnModel:
         Neural network model for IK using scikit-learn.
     """
 
-    def __init__(self, input_dimension, output_dimension, hidden_layers=[256, 512, 256], activation='relu'):
+    def __init__(self, input_dimension, output_dimension, hidden_layers=[32, 64, 32], activation='relu'):
         """
         Initialize the tensorflow model.
 
@@ -556,16 +557,16 @@ class ScikitLearnModel:
             hidden_layer_sizes=hidden_layers,
             activation=activation,
             solver='adam',
-            alpha=0.0001,
+            alpha=0.1,
             batch_size='auto',
             learning_rate='adaptive',
             learning_rate_init=0.001,
-            max_iter=300,
+            max_iter=100,
             shuffle=True,
             random_state=42,
             early_stopping=True,
             validation_fraction=0.1,
-            n_iter_no_change=10,
+            n_iter_no_change=30,
             verbose=False
         )
 
@@ -712,7 +713,7 @@ if __name__ == "__main__":
 
     tf_model = TensorFlowModel(input_dimension=3, output_dimension=4)
 
-    tf_history = tf_model.train(X_train, y_train, epochs=500, batch_size=64, verbose=2)
+    tf_history = tf_model.train(X_train, y_train, epochs=1000, batch_size=64, verbose=2)
 
     # Evaluate models
 

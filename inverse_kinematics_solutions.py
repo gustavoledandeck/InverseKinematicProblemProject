@@ -38,15 +38,15 @@ class InverseKinematics4DOF:
         self.model_type = model_type
         self.ikpy_visualizer = IKPyVisualizer(link_lengths=self.link_lengths)
 
-        #Initialize forward kinematics and data generator
+        # Initialize forward kinematics and data generator
         self.fk = ForwardKinematics(link_lengths=self.link_lengths)
         self.data_gen = DataGenerator(link_lengths=self.link_lengths)
 
-        #Initialize neural netwrok model
+        # Initialize neural netwrok model
         if model_type == 'tensorflow':
-            self.model = TensorFlowModel(input_dimension=3, output_dimension=4, activation='swish')
+            self.model = TensorFlowModel(input_dimension=3, output_dimension=4, activation='relu')
         elif model_type == 'pytorch':
-            self.model = PyTorchModel(input_dimension=3, output_dimension=4, activation='')
+            self.model = PyTorchModel(input_dimension=3, output_dimension=4, activation='relu')
         elif model_type == 'sklearn':
             self.model = ScikitLearnModel(input_dimension=3, output_dimension=4, activation='relu')
 
@@ -55,8 +55,7 @@ class InverseKinematics4DOF:
 
         self.is_trained = False
 
-
-    def generate_training_data(self, num_samples=1000):
+    def generate_training_data(self, num_samples=20000):
         """
             Generate training data for the 4-DOF IK model.
 
@@ -68,13 +67,13 @@ class InverseKinematics4DOF:
 
         """
         print(f"Generating {num_samples} training samples for 4-DOF model ...")
-        #return self.data_gen.generate_dataset_4dof(num_samples)
+        # return self.data_gen.generate_dataset_4dof(num_samples)
         # Combine grid and random sampling
         X_grid, y_grid = self.data_gen.generate_grid_dataset_4dof(grid_size=20)
         X_rand, y_rand = self.data_gen.generate_dataset_4dof(num_samples)
         return np.vstack([X_grid, X_rand]), np.vstack([y_grid, y_rand])
 
-    def train(self, X=None, y=None, num_samples=1000, epochs=100, batch_size=32, validation_split=0.2,verbose=1):
+    def train(self, X=None, y=None, num_samples=1000, epochs=100, batch_size=32, validation_split=0.2, verbose=1):
         """
             Train the IK model.
 
@@ -89,18 +88,18 @@ class InverseKinematics4DOF:
         :return:
             dict: Training history
         """
-        #Generate data if not provided
+        # Generate data if not provided
         if X is None or y is None:
             X, y = self.generate_training_data(num_samples)
 
-        #Split data into training and testing sets
+        # Split data into training and testing sets
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
         print(f"Training 4-DOF inverse kinematics model using {self.model_type}...")
         history = self.model.train(X_train, y_train, epochs=epochs, batch_size=batch_size,
                                    validation_split=validation_split, verbose=verbose)
 
-        #Evaluate the model
+        # Evaluate the model
         metrics = self.model.evaluate(X_test, y_test)
         print("\nModel Evaluation:")
         print(f"MAE per joint: {metrics['mae_per_joint']}")
@@ -110,7 +109,6 @@ class InverseKinematics4DOF:
         self.is_trained = True
 
         return history, metrics
-
 
     def predict(self, end_effector_position):
         """
@@ -125,11 +123,11 @@ class InverseKinematics4DOF:
         if not self.is_trained:
             raise ValueError("Model is not trained. Call train() first.")
 
-            #Ensure input is a 2D array
+            # Ensure input is a 2D array
         if len(np.array(end_effector_position).shape) == 1:
             end_effector_position = np.array(end_effector_position).reshape(1, -1)
 
-            #Predict joint angles
+            # Predict joint angles
         joint_angles = self.model.predict(end_effector_position)
 
         return joint_angles[0]
@@ -148,10 +146,10 @@ class InverseKinematics4DOF:
             float: Euclidean distance error in mm
         """
 
-        #Calculate forward kinematics for the predicted angles
+        # Calculate forward kinematics for the predicted angles
         x, y, z = self.fk.forward_kinematics_4dof(predicted_angles)
 
-        #Calculate Euclidean distance error
+        # Calculate Euclidean distance error
         error = np.sqrt((end_effector_position[0] - x) ** 2 +
                         (end_effector_position[1] - y) ** 2 +
                         (end_effector_position[2] - z) ** 2)
@@ -219,7 +217,7 @@ class InverseKinematics4DOF:
             matplotlib.figure: Figure object with the visualization
         """
 
-        #Convert target position to meters
+        # Convert target position to meters
         target = np.array(end_effector_position) / 1000
 
         # Calculate error
@@ -228,37 +226,36 @@ class InverseKinematics4DOF:
         """
             #Calculate forward kinematics for the predicted angles
             x, y, z = self.fk.forward_kinematics_4dof(predicted_angles)
-    
+
             #Calculate error
             error = self.verify_accuracy(end_effector_position, predicted_angles)
-    
+
             #Visualize the arm configuration
             fig = self.fk.visualize_arm_4dof(predicted_angles)
-    
+
             #Add target position
             ax = fig.axes[0]
             ax.scatter(end_effector_position[0], end_effector_position[1], end_effector_position[2],
                        color='red', marker='x', s=100, label='Target')
-    
+
             #Add predicted position
             ax.scatter(x, y, z, color='green', marker='o', s=100, label='Predicted')
-    
+
             #Update title with error information
             ax.set_title(f'4-DOF Arm Configuration Error: {error:.2f} mm')
             ax.legend()
         """
-        #Create visualization
+        # Create visualization
         fig = self.ikpy_visualizer.visualize(
             angles=predicted_angles,
             target=target
         )
 
-
-
-        #Add title with error
+        # Add title with error
         ax = fig.axes[0]
         ax.set_title(f'4-DOF Arm Configuration\nError: {error:.2f} mm')
         return fig
+
 
 class InverseKinematics3DOF:
     """
@@ -331,18 +328,18 @@ class InverseKinematics3DOF:
         :return:
             dict: Training history
         """
-        #Generate data if not provided
+        # Generate data if not provided
         if X is None or y is None:
             X, y = self.generate_training_data(num_samples, use_grid, grid_size)
 
-        #Split data into training and testing sets
+        # Split data into training and testing sets
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
         print(f"Training 3-DOF inverse kinematics model using {self.model_type}...")
         history = self.model.train(X_train, y_train, epochs=epochs, batch_size=batch_size,
                                    validation_split=validation_split, verbose=verbose)
 
-        #Evaluate the model
+        # Evaluate the model
         metrics = self.model.evaluate(X_test, y_test)
         print("\nModel Evaluation:")
         print(f"MAE per joint: {metrics['mae_per_joint']}")
@@ -353,25 +350,25 @@ class InverseKinematics3DOF:
         return history, metrics
 
     def predict(self, end_effector_position):
-            """
-                Predict joint angles for a given end-effector position.
-                Args:
-                    end_effector_position (list or numpy.ndarray): End-effector position [x, y]
+        """
+            Predict joint angles for a given end-effector position.
+            Args:
+                end_effector_position (list or numpy.ndarray): End-effector position [x, y]
 
-            :return:
-                numpy.ndarray: Predicted joint angles [theta0, theta1, theta2]
-            """
-            if not self.is_trained:
-                raise ValueError("Model is not trained. Call train() first.")
+        :return:
+            numpy.ndarray: Predicted joint angles [theta0, theta1, theta2]
+        """
+        if not self.is_trained:
+            raise ValueError("Model is not trained. Call train() first.")
 
-            #Ensure input is a 2D array
-            if len(np.array(end_effector_position).shape) == 1:
-                end_effector_position = np.array(end_effector_position).reshape(1, -1)
+        # Ensure input is a 2D array
+        if len(np.array(end_effector_position).shape) == 1:
+            end_effector_position = np.array(end_effector_position).reshape(1, -1)
 
-            #Predict joint angles
-            joint_angles = self.model.predict(end_effector_position)
+        # Predict joint angles
+        joint_angles = self.model.predict(end_effector_position)
 
-            return joint_angles[0]
+        return joint_angles[0]
 
     def verify_accuracy(self, end_effector_position, predicted_angles):
         """
@@ -384,10 +381,10 @@ class InverseKinematics3DOF:
         :return:
             float: Euclidean distance error in mm
         """
-        #Calculate forward kinematics for the predicted angles
+        # Calculate forward kinematics for the predicted angles
         x, y = self.fk.forward_kinematics_3dof(predicted_angles)
 
-        #Calculate Euclidean distance error
+        # Calculate Euclidean distance error
         error = np.sqrt((end_effector_position[0] - x) ** 2 +
                         (end_effector_position[1] - y) ** 2)
 
@@ -428,40 +425,41 @@ class InverseKinematics3DOF:
         :return:
             matplotlib.figure: Figure object with the visualization
         """
-        #Calculate forward kinematics for the predicted angles
+        # Calculate forward kinematics for the predicted angles
         x, y = self.fk.forward_kinematics_3dof(predicted_angles)
 
-        #Calculate error
+        # Calculate error
         error = self.verify_accuracy(end_effector_position, predicted_angles)
 
         # Visualize the arm configuration
         fig = self.fk.visualize_arm_3dof(predicted_angles)
 
-        #Add target position
+        # Add target position
         ax = fig.axes[0]
         ax.scatter(end_effector_position[0], end_effector_position[1],
                    color='red', marker='x', s=100, label='Target')
 
-        #Add predicted position
+        # Add predicted position
         ax.scatter(x, y, color='green', marker='o', s=100, label='Predicted')
 
-        #Update title with error information
+        # Update title with error information
         ax.set_title(f'3-DOF Arm Configuration\nError: {error:.2f} mm')
         ax.legend()
 
         return fig
 
+
 if __name__ == "__main__":
-    #Test 4-DOF inverse kinematics
+    # Test 4-DOF inverse kinematics
     ik_4dof = InverseKinematics4DOF(model_type='tensorflow')
 
-    #Generate small dataset for testing
+    # Generate small dataset for testing
     X_4dof, y_4dof = ik_4dof.generate_training_data(num_samples=1000)
 
-    #Train the model with a small number of epochs for testing
+    # Train the model with a small number of epochs for testing
     history_4dof, metrics_4dof = ik_4dof.train(X_4dof, y_4dof, epochs=10, verbose=2)
 
-    #Test prediction
+    # Test prediction
     target_position_4dof = [150, 100, 50]  # Example target position
     predicted_angles_4dof = ik_4dof.predict(target_position_4dof)
 
@@ -469,23 +467,23 @@ if __name__ == "__main__":
     print(f"Target position: {target_position_4dof}")
     print(f"Predicted angles: {predicted_angles_4dof}")
 
-    #Verify accuracy
+    # Verify accuracy
     error_4dof = ik_4dof.verify_accuracy(target_position_4dof, predicted_angles_4dof)
     print(f"Prediction error: {error_4dof:.2f} mm")
 
-    #Visualize prediction
+    # Visualize prediction
     fig_4dof = ik_4dof.visualize_prediction(target_position_4dof, predicted_angles_4dof)
 
-    #Test 3-DOF inverse kinematics
+    # Test 3-DOF inverse kinematics
     ik_3dof = InverseKinematics3DOF(model_type='tensorflow')
 
-    #Generate small dataset for testing
+    # Generate small dataset for testing
     X_3dof, y_3dof = ik_3dof.generate_training_data(num_samples=1000)
 
-    #Train the model with a small number of epochs for testing
+    # Train the model with a small number of epochs for testing
     history_3dof, metrics_3dof = ik_3dof.train(X_3dof, y_3dof, epochs=10, verbose=2)
 
-    #Test prediction
+    # Test prediction
     target_position_3dof = [150, 100]  # Example target position
     predicted_angles_3dof = ik_3dof.predict(target_position_3dof)
 
@@ -493,11 +491,11 @@ if __name__ == "__main__":
     print(f"Target position: {target_position_3dof}")
     print(f"Predicted angles: {predicted_angles_3dof}")
 
-    #Verify accuracy
+    # Verify accuracy
     error_3dof = ik_3dof.verify_accuracy(target_position_3dof, predicted_angles_3dof)
     print(f"Prediction error: {error_3dof:.2f} mm")
 
-    #Visualize prediction
+    # Visualize prediction
     fig_3dof = ik_3dof.visualize_prediction(target_position_3dof, predicted_angles_3dof)
 
     plt.show()
