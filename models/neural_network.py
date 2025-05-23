@@ -5,6 +5,7 @@ import numpy as np
 import time
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
+
 from sklearn.model_selection import train_test_split
 import tensorflow as tf
 import torch
@@ -20,7 +21,7 @@ class TensorFlowModel:
     NNA model for IK with tensorflow
     """
 
-    def __init__(self, input_dimension, output_dimension, hidden_layers=[32, 64, 32], activation='relu'):
+    def __init__(self, input_dimension, output_dimension, hidden_layers=(128, 64, 32), activation='swish'):
         """
             This is the constructor of TF model.
             Initialize the tensorflow model.
@@ -28,7 +29,7 @@ class TensorFlowModel:
             Args:
                 input_dimension (int): Input dimension (end-effector position)
                 output_dimension (int): Output dimension (joint angles)
-                hidden_layers (list) : List of neurons in each hidden layer
+                hidden_layers (tuple) : List of neurons in each hidden layer
                 activation (str) : Activation function to use
         """
 
@@ -62,16 +63,17 @@ class TensorFlowModel:
 
         #Hidden layers
         for units in self.hidden_layers:
+            model.add(keras.layers.Dense(
+                units,
+                activation=self.activation,
+                kernel_regularizer=keras.regularizers.l2(0.001)  # ADDED: L2 Kernel Regularization
+            ))
+            model.add(keras.layers.BatchNormalization())  # Batch Normalization helps stabilize training
+            model.add(keras.layers.Dropout(0.3))  # ADDED/MODIFIED: Dropout for regularization
 
-            model.add(keras.layers.Dense(units, activation=self.activation))
-            model.add(keras.layers.BatchNormalization())
-
-            #Add dropout
-            model.add(keras.layers.Dropout(0.3))
-
-
-        #output layer
-        model.add(keras.layers.Dense(self.output_dimension))
+            # Output layer
+            # Trying linear approach to see if it fits better to this problem
+        model.add(keras.layers.Dense(self.output_dimension, activation=self.activation))
 
         #compile
         model.compile(
@@ -118,9 +120,11 @@ class TensorFlowModel:
         ]
 
         if callbacks is None:
-            callbacks = default_callbacks
+            callbacks_to_use = default_callbacks
         elif isinstance(callbacks, list):
-            callbacks = default_callbacks + callbacks
+            callbacks_to_use = default_callbacks + callbacks
+        else:
+            callbacks_to_use = callbacks
 
         #Train the model
         start_time = time.time()
@@ -130,7 +134,7 @@ class TensorFlowModel:
             batch_size=batch_size,
             validation_split=validation_split,
             verbose=verbose,
-            callbacks=callbacks
+            callbacks=callbacks_to_use
         )
         training_time = time.time() - start_time
 
@@ -159,9 +163,9 @@ class TensorFlowModel:
         #Inverse transform to get original scale
         y_pred = self.output_scaler.inverse_transform(y_scaled_pred)
 
-        print(f"TF model inference time: {inference_time*1000:.2f} ms")
-
+        print(f"TensorFlow model inference for {X.shape[0]} samples: {inference_time * 1000:.2f} ms")
         return y_pred
+
     def evaluate(self, X, y_true):
         """
             Evaluate the model performance.
@@ -183,14 +187,15 @@ class TensorFlowModel:
         mae_overall = np.mean(mae_per_joint)
 
         # Calculate Euclidean distance error in joint space
-        euclidean_error = np.sqrt(np.sum((y_true - y_pred) ** 2, axis=1))
-        mean_euclidean_error = np.mean(euclidean_error)
+        euclidean_error_joint_space = np.sqrt(np.sum((y_true - y_pred) ** 2, axis=1))
+        mean_euclidean_error_joint_space = np.mean(euclidean_error_joint_space)
+        max_euclidean_error_joint_space = np.max(euclidean_error_joint_space)
 
         return {
             'mae_per_joint': mae_per_joint,
             'mae_overall': mae_overall,
-            'mean_euclidean_error': mean_euclidean_error,
-            'max_euclidean_error': np.max(euclidean_error)
+            'mean_euclidean_error_joint_space': mean_euclidean_error_joint_space,
+            'max_euclidean_error_joint_space': max_euclidean_error_joint_space
         }
 
     def save(self, model_path):
@@ -203,7 +208,9 @@ class TensorFlowModel:
         """
 
         #Create directory if it doesn't exist
-        os.makedirs(os.path.dirname(model_path), exist_ok=True)
+        model_dir = os.path.dirname(model_path)
+        if model_dir and not os.path.exists(model_dir):
+            os.makedirs(model_dir, exist_ok=True)
 
         #Save the model
         self.model.save(model_path)
@@ -233,13 +240,13 @@ class TensorFlowModel:
 
 
 
-        self.input_scaler.data_min_ = input_scaler_data[0]
-        self.input_scaler.data_max_ = input_scaler_data[1]
-        self.input_scaler.scale_ = 1.0 / (self.input_scaler.data_max_ - self.input_scaler.data_min_)
+        #self.input_scaler.data_min_ = input_scaler_data[0]
+        #self.input_scaler.data_max_ = input_scaler_data[1]
+        #self.input_scaler.scale_ = 1.0 / (self.input_scaler.data_max_ - self.input_scaler.data_min_)
 
-        self.output_scaler.data_min_ = output_scaler_data[0]
-        self.output_scaler.data_max_ = output_scaler_data[1]
-        self.output_scaler.scale_ = 1.0 / (self.output_scaler.data_max_ - self.output_scaler.data_min_)
+        #self.output_scaler.data_min_ = output_scaler_data[0]
+        #self.output_scaler.data_max_ = output_scaler_data[1]
+        #self.output_scaler.scale_ = 1.0 / (self.output_scaler.data_max_ - self.output_scaler.data_min_)
 
 class PyTorchModel:
 
@@ -247,27 +254,33 @@ class PyTorchModel:
         NNA model for IK with PyTorch.
     """
 
-    def __init__(self, input_dimension, output_dimension, hidden_layers=[32, 64, 32], activation='relu'):
+    def __init__(self, input_dimension, output_dimension,
+                 hidden_layers=(128, 64, 32),
+                 activation='relu',
+                 learning_rate=0.001,
+                 weight_decay=1e-4):
         """
             Initialize the PyTorch model.
 
         Args:
             input_dim (int): Input dimension (end-effector position)
             output_dim (int): Output dimension (joint angles)
-            hidden_layers (list): List of neurons in each hidden layer
+            hidden_layers (tuple): Tuple of neurons in each hidden layer
             activation (str): Activation function to use
         """
         self.input_dimension = input_dimension
         self.output_dimension = output_dimension
         self.hidden_layers = hidden_layers
+        self.learning_rate = learning_rate
+        self.weight_decay = weight_decay  # L2 Regularization
 
         # Set activation function
         if activation == 'relu':
-            self.activation = nn.ReLU()
+            self.activation_fn = nn.ReLU()
         elif activation == 'tanh':
-            self.activation = nn.Tanh()
+            self.activation_fn = nn.Tanh()
         else:
-            self.activation = nn.GELU()
+            self.activation_fn = nn.Sigmoid()
 
 
         # Create input and output scalers
@@ -280,7 +293,11 @@ class PyTorchModel:
 
         # Define loss function and optimizer
         self.criterion = nn.MSELoss()
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.001)
+        self.optimizer = torch.optim.Adam(
+            self.model.parameters(),
+            lr=self.learning_rate,
+            weight_decay=self.weight_decay
+        )
 
     def _build_model(self):
         """
@@ -291,10 +308,17 @@ class PyTorchModel:
         """
 
         layers = []
-
+        current_dim = self.input_dimension
+        for units in self.hidden_layers:
+            layers.append(nn.Linear(current_dim, units))
+            layers.append(self.activation_fn)
+            layers.append(nn.BatchNorm1d(units))
+            layers.append(nn.Dropout(0.3))
+            current_dim = units
+        """
         # Input layer
         layers.append(nn.Linear(self.input_dimension, self.hidden_layers[0]))
-        layers.append(self.activation)
+        layers.append(self.activation_fn)
         layers.append(nn.BatchNorm1d(self.hidden_layers[0]))
 
 
@@ -306,6 +330,11 @@ class PyTorchModel:
 
         # Output layer
         layers.append(nn.Linear(self.hidden_layers[-1], self.output_dimension))
+
+        return nn.Sequential(*layers)
+        """
+        # Output layer - Linear activation for regression
+        layers.append(nn.Linear(current_dim, self.output_dimension))
 
         return nn.Sequential(*layers)
 
@@ -323,6 +352,7 @@ class PyTorchModel:
         :return:
             dict: Training history
         """
+        start_time = time.time()
         #Fit the scalers
         X_scaled = self.input_scaler.fit_transform(X)
         y_scaled = self.output_scaler.fit_transform(y)
@@ -356,11 +386,12 @@ class PyTorchModel:
         best_model_state = None
 
         #Train the model
-        start_time = time.time()
+
         for epoch in range(epochs):
             #Training
             self.model.train()
             train_loss = 0.0
+            """
             for inputs, targets in train_loader:
                 #Forward pass
                 outputs = self.model(inputs)
@@ -372,8 +403,16 @@ class PyTorchModel:
                 self.optimizer.step()
 
                 train_loss += loss.item()
+            """
+            for inputs, targets in train_loader:
+                self.optimizer.zero_grad()  # Zero gradients
+                outputs = self.model(inputs)  # Forward pass
+                loss = self.criterion(outputs, targets)  # Compute loss
+                loss.backward()  # Backward pass
+                self.optimizer.step()  # Update weights
+                train_loss += loss.item() * inputs.size(0)
 
-            train_loss /= len(train_loader)
+            train_loss /= len(train_loader.dataset)
             history['train_loss'].append(train_loss)
 
             #Validation
@@ -429,15 +468,17 @@ class PyTorchModel:
 
         #Make predictions
         self.model.eval()
+        start_time = time.time()
         with torch.no_grad():
-            start_time = time.time()
-            y_scaled_pred = self.model(X_tensor).cpu().numpy()
-            inference_time = time.time() - start_time
+            #y_scaled_pred = self.model(X_tensor).cpu().numpy()
+            y_scaled_pred_tensor = self.model(X_tensor)
+        inference_time = time.time() - start_time
 
         #Inverse transform to get original scale
+        #y_pred = self.output_scaler.inverse_transform(y_scaled_pred)
+        y_scaled_pred = y_scaled_pred_tensor.cpu().numpy()
         y_pred = self.output_scaler.inverse_transform(y_scaled_pred)
-
-        print(f"PyTorch model inference time: {inference_time * 1000:.2f} ms")
+        print(f"PyTorch model inference for {X.shape[0]} samples: {inference_time * 1000:.2f} ms")
 
         return y_pred
 
@@ -461,14 +502,15 @@ class PyTorchModel:
         mae_overall = np.mean(mae_per_joint)
 
         #Calculate Euclidean distance error in joint space
-        euclidean_error = np.sqrt(np.sum((y_true - y_pred) ** 2, axis=1))
-        mean_euclidean_error = np.mean(euclidean_error)
+        euclidean_error_joint_space = np.sqrt(np.sum((y_true - y_pred) ** 2, axis=1))
+        mean_euclidean_error_joint_space = np.mean(euclidean_error_joint_space)
+        max_euclidean_error_joint_space = np.max(euclidean_error_joint_space)
 
         return {
             'mae_per_joint': mae_per_joint,
             'mae_overall': mae_overall,
-            'mean_euclidean_error': mean_euclidean_error,
-            'max_euclidean_error': np.max(euclidean_error)
+            'mean_euclidean_error_joint_space': mean_euclidean_error_joint_space,
+            'max_euclidean_error_joint_space': max_euclidean_error_joint_space
         }
 
     def save(self, model_path):
@@ -480,22 +522,24 @@ class PyTorchModel:
 
         """
         #Create directory if it doesn't exist
-        os.makedirs(os.path.dirname(model_path), exist_ok=True)
-
+        model_dir = os.path.dirname(model_path)
+        if model_dir and not os.path.exists(model_dir):
+            os.makedirs(model_dir, exist_ok=True)
         #Save the model
         torch.save({
             'model_state_dict': self.model.state_dict(),
-            'input_dim': self.input_dimension,
-            'output_dim': self.output_dimension,
-            'hidden_layers': self.hidden_layers
+            'input_dimension': self.input_dimension,
+            'output_dimension': self.output_dimension,
+            'hidden_layers': self.hidden_layers,
+            'activation': self.activation_fn.__class__.__name__,  # Store activation name
+            'learning_rate': self.learning_rate,
+            'weight_decay': self.weight_decay
         }, model_path)
+        print(f"PyTorch model saved to {model_path}")
 
-        #Save scalers
-        np.save(os.path.join(os.path.dirname(model_path), 'pt_input_scaler.npy'),
-                [self.input_scaler.data_min_, self.input_scaler.data_max_])
-        np.save(os.path.join(os.path.dirname(model_path), 'pt_output_scaler.npy'),
-                [self.output_scaler.data_min_, self.output_scaler.data_max_])
-
+        joblib.dump(self.input_scaler, os.path.join(model_dir, 'pt_input_scaler.joblib'))
+        joblib.dump(self.output_scaler, os.path.join(model_dir, 'pt_output_scaler.joblib'))
+        print(f"PyTorch scalers saved in {model_dir}")
     def load(self, model_path):
         """
             Load the model from disk.
@@ -509,12 +553,33 @@ class PyTorchModel:
         self.input_dimension = checkpoint['input_dimension']
         self.output_dimension = checkpoint['output_dimension']
         self.hidden_layers = checkpoint['hidden_layers']
+        activation_name = checkpoint.get('activation', 'ReLU').lower()  # Default to ReLU if not saved
+        self.learning_rate = checkpoint.get('learning_rate', 0.001)
+        self.weight_decay = checkpoint.get('weight_decay', 1e-4)
+
+        if activation_name == 'relu':
+            self.activation_fn = nn.ReLU()
+        elif activation_name == 'tanh':
+            self.activation_fn = nn.Tanh()
+        elif activation_name == 'gelu':
+            self.activation_fn = nn.GELU()
+        else:
+            self.activation_fn = nn.ReLU()
 
         #Rebuild the model
         self.model = self._build_model().to(self.device)
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.model.eval()
+        print(f"PyTorch model loaded from {model_path}")
 
+        # Re-initialize optimizer if further training is intended, otherwise not strictly needed for inference
+        self.optimizer = torch.optim.Adam(
+            self.model.parameters(),
+            lr=self.learning_rate,
+            weight_decay=self.weight_decay
+        )
+        self.criterion = nn.MSELoss()
+        """
         #Load scalers
         input_scaler_data = np.load(os.path.join(os.path.dirname(model_path), 'pt_input_scaler.npy'))
         output_scaler_data = np.load(os.path.join(os.path.dirname(model_path), 'pt_output_scaler.npy'))
@@ -526,16 +591,26 @@ class PyTorchModel:
         self.output_scaler.data_min_ = output_scaler_data[0]
         self.output_scaler.data_max_ = output_scaler_data[1]
         self.output_scaler.scale_ = 1.0 / (self.output_scaler.data_max_ - self.output_scaler.data_min_)
-
+        """
+        model_dir = os.path.dirname(model_path)
+        self.input_scaler = joblib.load(os.path.join(model_dir, 'pt_input_scaler.joblib'))
+        self.output_scaler = joblib.load(os.path.join(model_dir, 'pt_output_scaler.joblib'))
+        print(f"PyTorch scalers loaded from {model_dir}")
 
 class ScikitLearnModel:
     """
         Neural network model for IK using scikit-learn.
     """
 
-    def __init__(self, input_dimension, output_dimension, hidden_layers=[32, 64, 32], activation='relu'):
+    def __init__(self, input_dimension, output_dimension,
+                 hidden_layer_sizes=(256, 128),
+                 activation='relu',
+                 alpha=0.01,
+                 learning_rate_init=0.001,
+                 max_iter=1000, # Max iterations for solver
+                 n_iter_no_change=30):
         """
-        Initialize the tensorflow model.
+        Initialize the scikit-learn model.
 
         Args:
             input_dimension (int): Input dimension (end-effector position)
@@ -545,8 +620,7 @@ class ScikitLearnModel:
         """
         self.input_dimension = input_dimension
         self.output_dimension = output_dimension
-        self.hidden_layers = hidden_layers
-        self.activation = activation
+
 
         #Create input and output scalers
         self.input_scaler = MinMaxScaler()
@@ -554,20 +628,20 @@ class ScikitLearnModel:
 
         #Build the model
         self.model = MLPRegressor(
-            hidden_layer_sizes=hidden_layers,
+            hidden_layer_sizes=hidden_layer_sizes,
             activation=activation,
             solver='adam',
-            alpha=0.1,
+            alpha=alpha,  # L2 penalty (regularization term)
             batch_size='auto',
-            learning_rate='adaptive',
-            learning_rate_init=0.001,
-            max_iter=100,
+            learning_rate='adaptive',  # Learning rate schedule
+            learning_rate_init=learning_rate_init,
+            max_iter=max_iter,
             shuffle=True,
-            random_state=42,
-            early_stopping=True,
+            random_state=42,  # For reproducibility
+            early_stopping=True,  # Enable early stopping
             validation_fraction=0.1,
-            n_iter_no_change=30,
-            verbose=False
+            n_iter_no_change=n_iter_no_change,  # Number of iterations with no improvement to wait before stopping
+            verbose=False  # Set to True or an int for verbosity during training
         )
 
     def train(self, X, y, epochs=None, batch_size=None, validation_split=None, verbose=1):
@@ -577,26 +651,40 @@ class ScikitLearnModel:
             Args:
                 X (numpy.ndarray): Input data (end-effector positions)
                 y (numpy.ndarray): Target data (joint angles)
-                epochs (int): Not used in scikit-learn (controlled by max_iter)
-                batch_size (int): Not used in scikit-learn (controlled by batch_size)
-                validation_split (float): Not used in scikit-learn (controlled by validation_fraction)
+                epochs (int): (controlled by max_iter)
+                batch_size (int):  (controlled by batch_size)
+                validation_split (float):  (controlled by validation_fraction)
                 verbose (int): Verbosity level
         :return:
             dict: Training history (not available in scikit-learn)
         """
+        start_time = time.time()
         #Fit the scalers
         X_scaled = self.input_scaler.fit_transform(X)
-        y_scaled = self.output_scaler.fit_transform(y)
+        # MLPRegressor expects a 1D array for y if there's only one target,
+        # or a 2D array if multiple targets. Ensure y_scaled is correctly shaped.
+        if self.output_dimension == 1 and len(y.shape) > 1 and y.shape[1] == 1:
+            y_scaled = self.output_scaler.fit_transform(y).ravel()
+        else:
+            y_scaled = self.output_scaler.fit_transform(y)
+
+        #y_scaled = self.output_scaler.fit_transform(y)
 
         #Train the model
-        start_time = time.time()
+
         self.model.fit(X_scaled, y_scaled)
         training_time = time.time() - start_time
 
-        print(f"scikit-learn model training completed in {training_time:.2f} seconds")
+        #print(f"scikit-learn model training completed in {training_time:.2f} seconds")
 
-        #scikit-learn doesn't provide training history
-        return {'loss': [self.model.loss_], 'iterations': self.model.n_iter_}
+        if verbose:
+            print(f"Scikit-learn model training completed in {training_time:.2f} seconds.")
+            print(f"Number of iterations: {self.model.n_iter_}")
+            print(f"Final loss: {self.model.loss_}")
+
+            # Scikit-learn's MLPRegressor doesn't return a history dict like Keras.
+            # We can return some information if needed.
+        return {'loss': self.model.loss_, 'n_iter_': self.model.n_iter_}
 
     def predict(self, X):
         """
@@ -615,11 +703,12 @@ class ScikitLearnModel:
         y_scaled_pred = self.model.predict(X_scaled)
         inference_time = time.time() - start_time
 
-        #Inverse transform to get original scale
+        # Reshape if y_scaled_pred is 1D (single output target) to make inverse_transform work as expected
+        if len(y_scaled_pred.shape) == 1:
+            y_scaled_pred = y_scaled_pred.reshape(-1, 1)
+
         y_pred = self.output_scaler.inverse_transform(y_scaled_pred)
-
-        print(f"scikit-learn model inference time: {inference_time * 1000:.2f} ms")
-
+        # print(f"Scikit-learn model inference for {X.shape[0]} samples: {inference_time*1000:.2f} ms")
         return y_pred
 
     def evaluate(self, X, y_true):
@@ -642,14 +731,16 @@ class ScikitLearnModel:
         mae_overall = np.mean(mae_per_joint)
 
         #Calculate Euclidean distance error in joint space
-        euclidean_error = np.sqrt(np.sum((y_true - y_pred) ** 2, axis=1))
-        mean_euclidean_error = np.mean(euclidean_error)
+        euclidean_error_joint_space = np.sqrt(np.sum((y_true - y_pred) ** 2, axis=1))
+        mean_euclidean_error_joint_space = np.mean(euclidean_error_joint_space)
+        max_euclidean_error_joint_space = np.max(euclidean_error_joint_space)
 
         return {
             'mae_per_joint': mae_per_joint,
             'mae_overall': mae_overall,
-            'mean_euclidean_error': mean_euclidean_error,
-            'max_euclidean_error': np.max(euclidean_error)
+            'mean_euclidean_error_joint_space': mean_euclidean_error_joint_space,
+            'max_euclidean_error_joint_space': max_euclidean_error_joint_space,
+            'score': self.model.score(self.input_scaler.transform(X), self.output_scaler.transform(y_true))  # R^2 score
         }
 
     def save(self, model_path):
@@ -661,16 +752,17 @@ class ScikitLearnModel:
         :return:
         """
         #Create directory if it doesn't exist
-        os.makedirs(os.path.dirname(model_path), exist_ok=True)
+        model_dir = os.path.dirname(model_path)
+        if model_dir and not os.path.exists(model_dir):
+            os.makedirs(model_dir, exist_ok=True)
 
-        #Save the model
         joblib.dump(self.model, model_path)
+        print(f"Scikit-learn model saved to {model_path}")
 
-        #Save scalers
-        np.save(os.path.join(os.path.dirname(model_path), 'sklearn_input_scaler.npy'),
-                [self.input_scaler.data_min_, self.input_scaler.data_max_])
-        np.save(os.path.join(os.path.dirname(model_path), 'sklearn_output_scaler.npy'),
-                [self.output_scaler.data_min_, self.output_scaler.data_max_])
+        # Save scalers
+        joblib.dump(self.input_scaler, os.path.join(model_dir, 'sklearn_input_scaler.joblib'))
+        joblib.dump(self.output_scaler, os.path.join(model_dir, 'sklearn_output_scaler.joblib'))
+        print(f"Scikit-learn scalers saved in {model_dir}")
 
     def load(self, model_path):
         """
@@ -679,6 +771,7 @@ class ScikitLearnModel:
             Args:
                 model_path (str): Path to load the model from
 
+        """
         """
         #Load the model
         self.model = joblib.load(model_path)
@@ -694,51 +787,107 @@ class ScikitLearnModel:
         self.output_scaler.data_min_ = output_scaler_data[0]
         self.output_scaler.data_max_ = output_scaler_data[1]
         self.output_scaler.scale_ = 1.0 / (self.output_scaler.data_max_ - self.output_scaler.data_min_)
+        """
+        self.model = joblib.load(model_path)
+        print(f"Scikit-learn model loaded from {model_path}")
+
+        model_dir = os.path.dirname(model_path)
+        self.input_scaler = joblib.load(os.path.join(model_dir, 'sklearn_input_scaler.joblib'))
+        self.output_scaler = joblib.load(os.path.join(model_dir, 'sklearn_output_scaler.joblib'))
+        print(f"Scikit-learn scalers loaded from {model_dir}")
 
 
 if __name__ == "__main__":
     # Generate some random data to use in the models
 
-    np.random.seed(42)
+    print("Running basic tests for neural network models...")
+    np.random.seed(42)  # For reproducibility
 
-    X = np.random.rand(1000, 3)  # END-EFFECTOR POSITIONS (X, Y, Z)
+    # Generate some synthetic data for a 4-DOF arm (3D position input, 4 joint angles output)
+    num_samples = 2000  # Increased samples for a slightly more meaningful test
+    input_dim = 3  # (x, y, z)
+    output_dim = 4  # (q1, q2, q3, q4)
 
-    y = np.random.rand(1000, 4)  # JOINT ANGLES (Theta 0, Theta 1, Theta 02,Theta 3)
+    # Simulate end-effector positions and corresponding joint angles
+    # In a real scenario, this data would come from your forward kinematics calculations
+    # or a dataset of robot movements.
+    X_data = np.random.rand(num_samples, input_dim) * 200 - 100  # Example range for positions
+    y_data = np.random.rand(num_samples, output_dim) * np.pi - (np.pi / 2)  # Example range for joint angles (radians)
 
     # Split data into training and testing sets
+    X_train, X_test, y_train, y_test = train_test_split(X_data, y_data, test_size=0.2, random_state=42)
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    # --- Test TensorFlowModel ---
+    print("\n--- Testing TensorFlowModel ---")
+    try:
+        tf_model = TensorFlowModel(input_dimension=input_dim, output_dimension=output_dim,
+                                   hidden_layers=(64, 32))  # Using a smaller test architecture
+        print("Training TensorFlow model...")
+        tf_history = tf_model.train(X_train, y_train, epochs=50, batch_size=32,
+                                    verbose=0)  # Reduced epochs for quick test
+        print("Evaluating TensorFlow model...")
+        tf_metrics = tf_model.evaluate(X_test, y_test)
 
-    # Create and train TF model
+        print("\nTensorFlow Model Metrics:")
+        print(f"  MAE per joint (joint space): {tf_metrics['mae_per_joint']}")
+        print(f"  Overall MAE (joint space): {tf_metrics['mae_overall']:.4f}")
+        print(f"  Mean Euclidean Error (joint space): {tf_metrics['mean_euclidean_error_joint_space']:.4f}")
+        # Example of saving and loading
+        tf_model.save("trained_models/tf_test_model/model.keras")
+        tf_model_loaded = TensorFlowModel(input_dimension=input_dim, output_dimension=output_dim)
+        tf_model_loaded.load("trained_models/tf_test_model/model.keras")
+        tf_metrics_loaded = tf_model_loaded.evaluate(X_test, y_test)
+        print(f"  Overall MAE (loaded model): {tf_metrics_loaded['mae_overall']:.4f}")
 
-    tf_model = TensorFlowModel(input_dimension=3, output_dimension=4)
 
-    tf_history = tf_model.train(X_train, y_train, epochs=1000, batch_size=64, verbose=2)
+    except Exception as e:
+        print(f"Error during TensorFlowModel test: {e}")
 
-    # Evaluate models
+    # --- Test PyTorchModel ---
+    print("\n--- Testing PyTorchModel ---")
+    try:
+        pt_model = PyTorchModel(input_dimension=input_dim, output_dimension=output_dim, hidden_layers=(64, 32))
+        print("Training PyTorch model...")
+        pt_history = pt_model.train(X_train, y_train, epochs=50, batch_size=32, verbose=0)
+        print("Evaluating PyTorch model...")
+        pt_metrics = pt_model.evaluate(X_test, y_test)
 
-    tf_metrics = tf_model.evaluate(X_test, y_test)
+        print("\nPyTorch Model Metrics:")
+        print(f"  MAE per joint (joint space): {pt_metrics['mae_per_joint']}")
+        print(f"  Overall MAE (joint space): {pt_metrics['mae_overall']:.4f}")
+        print(f"  Mean Euclidean Error (joint space): {pt_metrics['mean_euclidean_error_joint_space']:.4f}")
+        pt_model.save("trained_models/pt_test_model/model.pth")
+        pt_model_loaded = PyTorchModel(input_dimension=input_dim, output_dimension=output_dim)
+        pt_model_loaded.load("trained_models/pt_test_model/model.pth")
+        pt_metrics_loaded = pt_model_loaded.evaluate(X_test, y_test)
+        print(f"  Overall MAE (loaded model): {pt_metrics_loaded['mae_overall']:.4f}")
+
+    except Exception as e:
+        print(f"Error during PyTorchModel test: {e}")
+
+    # --- Test ScikitLearnModel ---
+    print("\n--- Testing ScikitLearnModel ---")
+    try:
+        sklearn_model = ScikitLearnModel(input_dimension=input_dim, output_dimension=output_dim,
+                                         hidden_layer_sizes=(64, 32), n_iter_no_change=10)
+        print("Training ScikitLearn model...")
+        sklearn_history = sklearn_model.train(X_train, y_train, verbose=0)
+        print("Evaluating ScikitLearn model...")
+        sklearn_metrics = sklearn_model.evaluate(X_test, y_test)
+
+        print("\nScikit-learn Model Metrics:")
+        print(f"  MAE per joint (joint space): {sklearn_metrics['mae_per_joint']}")
+        print(f"  Overall MAE (joint space): {sklearn_metrics['mae_overall']:.4f}")
+        print(f"  Mean Euclidean Error (joint space): {sklearn_metrics['mean_euclidean_error_joint_space']:.4f}")
+        print(f"  R^2 Score: {sklearn_metrics['score']:.4f}")  # R^2 score is a good indicator for regression
+        sklearn_model.save("trained_models/sklearn_test_model/model.joblib")
+        sklearn_model_loaded = ScikitLearnModel(input_dimension=input_dim, output_dimension=output_dim)
+        sklearn_model_loaded.load("trained_models/sklearn_test_model/model.joblib")
+        sklearn_metrics_loaded = sklearn_model_loaded.evaluate(X_test, y_test)
+        print(f"  Overall MAE (loaded model): {sklearn_metrics_loaded['mae_overall']:.4f}")
 
 
+    except Exception as e:
+        print(f"Error during ScikitLearnModel test: {e}")
 
-
-    print("\nTF Model Metrics: ")
-    #print("MAE per Joint: ")
-    #print(tf_metrics['mae_per_joint'])
-    #print("\n")
-    #print("Mean Euclidean Error: ")
-    #print(tf_metrics['mean_euclidean_error'])
-    print(f"MAE per joint: {tf_metrics['mae_per_joint']}")
-    print(f"Overall MAE: {tf_metrics['mae_overall']:.4f}")
-    print(f"Mean Euclidean Error: {tf_metrics['mean_euclidean_error']:.4f}")
-    """
-    print("\nPyTorch Model Metrics:")
-    print(f"MAE per joint: {pt_metrics['mae_per_joint']}")
-    print(f"Overall MAE: {pt_metrics['mae_overall']:.4f}")
-    print(f"Mean Euclidean Error: {pt_metrics['mean_euclidean_error']:.4f}")
-
-    print("\nscikit-learn Model Metrics:")
-    print(f"MAE per joint: {sklearn_metrics['mae_per_joint']}")
-    print(f"Overall MAE: {sklearn_metrics['mae_overall']:.4f}")
-    print(f"Mean Euclidean Error: {sklearn_metrics['mean_euclidean_error']:.4f}")
-    """
+    print("\nBasic tests completed.")
