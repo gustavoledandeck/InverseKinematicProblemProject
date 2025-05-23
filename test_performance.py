@@ -11,373 +11,243 @@ import matplotlib.pyplot as plt
 import time
 import pandas as pd
 from sklearn.model_selection import train_test_split
-from utils.Forward_kinematics import ForwardKinematics
-from utils.data_for_simulation import DataGenerator
-from inverse_kinematics_solutions import InverseKinematics4DOF, InverseKinematics3DOF
+from utils.Forward_kinematics import ForwardKinematicsDH
+from inverse_kinematics_solutions import InverseKinematics3DOFPlanar, InverseKinematics4DOFSpatial
+#from utils.Forward_kinematics import ForwardKinematics
+#from utils.data_for_simulation import DataGenerator
+#from inverse_kinematics_solutions import InverseKinematics4DOF, InverseKinematics3DOF
 
-#Get the directory of the current script
-current_dir = os.path.dirname(os.path.abspath(__file__))
+current_script_dir = os.path.dirname(os.path.abspath(__file__))
+results_dir_perf = os.path.join(current_script_dir, "results_perf_dh_test")
+os.makedirs(results_dir_perf, exist_ok=True)
+trained_models_base_perf_dir = os.path.join(current_script_dir, "trained_models_perf_dh_test")
+os.makedirs(trained_models_base_perf_dir, exist_ok=True)
 
-#Define results directory relative to the current script
-results_dir = os.path.join(current_dir, "results")
+# These MUST be accurate for your physical arm.
+D1_BASE_SHOULDER_Z = 70.0
+A2_SHOULDER_ELBOW = 100.0
+A3_ELBOW_WRIST = 100.0
+A4_WRIST_EE = 60.0
+FK_DH_MODEL_GLOBAL = ForwardKinematicsDH(d1=D1_BASE_SHOULDER_Z, a2=A2_SHOULDER_ELBOW, a3=A3_ELBOW_WRIST, a4=A4_WRIST_EE)
 
-#Define trained_models directory relative to the current script
-trained_models_dir = os.path.join(current_dir, "trained_models")
+# Define joint limits (radians) - MUST MATCH YOUR ARM
+# For 3-DOF Planar (q_shoulder, q_elbow, q_wrist_pitch)
+JOINT_LIMITS_3DOF_ACTIVE = [(-np.pi / 2, np.pi / 2), (0, np.pi * 150 / 180), (-np.pi / 2, np.pi / 2)]
+# For 4-DOF Spatial (q_base, q_shoulder, q_elbow, q_wrist_pitch)
+JOINT_LIMITS_4DOF_ACTIVE = [(-np.pi, np.pi), (-np.pi / 2, np.pi / 2), (0, np.pi * 150 / 180), (-np.pi / 2, np.pi / 2)]
 
-def generate_test_points(num_points=10):
+
+def run_evaluation_pipeline(
+        arm_dof_type,  # "3dof_planar" or "4dof_spatial"
+        fk_dh_model_instance,
+        active_joint_limits,
+        fixed_base_rot_for_3dof=None,  # Radians, only for 3dof_planar
+        train_epochs=50,
+        num_master_samples=5000,
+        nn_arch_config=(64, 32),
+        run_nr=False,
+        nr_tol=0.1,
+        nr_iter=30
+):
     """
-        Generate test points for evaluating the inverse kinematics solutions.
-
-        Args:
-            num_points (int): Number of test points to generate
-
-        :return:
-            tuple: (points_4dof, points_3dof) where each is a list of end-effector positions
+    Runs the full training and evaluation pipeline for a given arm configuration.
     """
-    #Create a forward kinematics model with default link lengths
-    fk = ForwardKinematics()
+    frameworks = ['tensorflow', 'pytorch', 'sklearn']
+    all_results = []
 
-    #Generate random joint angles for 4-DOF
-    points_4dof = []
-    for _ in range(num_points):
-        theta0 = np.random.uniform(-np.pi, np.pi)
-        theta1 = np.random.uniform(-np.pi / 2, np.pi / 2)
-        theta2 = np.random.uniform(-np.pi / 2, np.pi / 2)
-        theta3 = np.random.uniform(-np.pi / 2, np.pi / 2)
+    print(f"\n\n=== EVALUATING {arm_dof_type.upper()} MODELS ===")
 
-        #Calculate forward kinematics
-        x, y, z = fk.forward_kinematics_4dof([theta0, theta1, theta2, theta3])
-        points_4dof.append([x, y, z])
-
-    #Generate random joint angles for 3-DOF
-    points_3dof = []
-    for _ in range(num_points):
-        theta0 = np.random.uniform(-np.pi, np.pi)
-        theta1 = np.random.uniform(-np.pi / 2, np.pi / 2)
-        theta2 = np.random.uniform(-np.pi / 2, np.pi / 2)
-
-        #Calculate forward kinematics
-        x, y = fk.forward_kinematics_3dof([theta0, theta1, theta2])
-        points_3dof.append([x, y])
-
-    return points_4dof, points_3dof
-
-
-def train_and_evaluate_models(train_epochs=100, num_samples=10000, test_points=10):
-    """
-        Train and evaluate all models for both 4-DOF and 3-DOF configurations.
-
-        Args:
-            train_epochs (int): Number of training epochs
-            num_samples (int): Number of training samples
-            test_points (int): Number of test points for evaluation
-
-        :return:
-            tuple: (results_4dof, results_3dof) where each is a pandas DataFrame with evaluation results
-    """
-    #Generate test points
-    points_4dof, points_3dof = generate_test_points(test_points)
-
-    #Create results dataframes
-    results_4dof = pd.DataFrame(columns=[
-        'Framework', 'Training Time (s)', 'Inference Time (ms)',
-        'Mean Error (mm)', 'Max Error (mm)', 'Accuracy < 0.5mm (%)'
-    ])
-
-    results_3dof = pd.DataFrame(columns=[
-        'Framework', 'Training Time (s)', 'Inference Time (ms)',
-        'Mean Error (mm)', 'Max Error (mm)', 'Accuracy < 0.5mm (%)'
-    ])
-
-    #Create data generators
-    data_gen_4dof = DataGenerator()
-    data_gen_3dof = DataGenerator()
-
-    #Generate training data
-    print("Generating training data...")
-    X_4dof, y_4dof = data_gen_4dof.generate_dataset_4dof(num_samples)
-    X_3dof, y_3dof = data_gen_3dof.generate_dataset_3dof(num_samples)
-
-    #Split data into training and testing sets
-    X_train_4dof, X_test_4dof, y_train_4dof, y_test_4dof = train_test_split(
-        X_4dof, y_4dof, test_size=0.2, random_state=42
-    )
-
-    X_train_3dof, X_test_3dof, y_train_3dof, y_test_3dof = train_test_split(
-        X_3dof, y_3dof, test_size=0.2, random_state=42
-    )
-
-    #Create models directory
-    #os.makedirs(f'{trained_models_dir}', exist_ok=True)
-
-    #Train and evaluate 4-DOF models
-    for framework in ['tensorflow', 'pytorch', 'sklearn']:
-        print(f"\nTraining 4-DOF model using {framework}...")
-
-        #Create and train model
-        model_4dof = InverseKinematics4DOF(model_type=framework)
-
-        #Measure training time
-        start_time = time.time()
-        history, metrics = model_4dof.train(
-            X_train_4dof, y_train_4dof,
-            epochs=train_epochs,
-            batch_size=64,
-            verbose=2
+    # 1. Generate Master Dataset
+    if arm_dof_type == "3dof_planar":
+        ik_solver_prototype = InverseKinematics3DOFPlanar(
+            fk_dh_model=fk_dh_model_instance,
+            fixed_base_rotation_rad=fixed_base_rot_for_3dof,
+            joint_angle_limits=active_joint_limits,
+            model_type='tensorflow'  # Placeholder for data gen
         )
-        training_time = time.time() - start_time
-
-        #Save model
-        model_path = f'{trained_models_dir}/model_4dof_{framework}.keras'
-        model_4dof.save_model(model_path)
-
-        #Evaluate on test points
-        errors = []
-        inference_times = []
-
-        for point in points_4dof:
-            #Measure inference time
-            start_time = time.time()
-            predicted_angles = model_4dof.predict(point)
-            inference_time = (time.time() - start_time) * 1000  # Convert to ms
-            inference_times.append(inference_time)
-
-            #Calculate error
-            error = model_4dof.verify_accuracy(point, predicted_angles)
-            errors.append(error)
-
-        #Calculate statistics
-        mean_error = np.mean(errors)
-        max_error = np.max(errors)
-        accuracy_percentage = np.mean([error < 0.5 for error in errors]) * 100
-        mean_inference_time = np.mean(inference_times)
-
-        #Add to results
-        results_4dof = pd.concat([results_4dof, pd.DataFrame([{
-            'Framework': framework,
-            'Training Time (s)': training_time,
-            'Inference Time (ms)': mean_inference_time,
-            'Mean Error (mm)': mean_error,
-            'Max Error (mm)': max_error,
-            'Accuracy < 0.5mm (%)': accuracy_percentage
-        }])], ignore_index=True)
-
-        print(f"4-DOF {framework} model evaluation:")
-        print(f"  Training time: {training_time:.2f} s")
-        print(f"  Mean inference time: {mean_inference_time:.2f} ms")
-        print(f"  Mean error: {mean_error:.4f} mm")
-        print(f"  Max error: {max_error:.4f} mm")
-        print(f"  Accuracy < 0.5mm: {accuracy_percentage:.2f}%")
-
-    #Train and evaluate 3-DOF models
-    for framework in ['tensorflow', 'pytorch', 'sklearn']:
-        print(f"\nTraining 3-DOF model using {framework}...")
-
-        #Create and train model
-        model_3dof = InverseKinematics3DOF(model_type=framework)
-
-        #Measure training time
-        start_time = time.time()
-        history, metrics = model_3dof.train(
-            X_train_3dof, y_train_3dof,
-            epochs=train_epochs,
-            batch_size=64,
-            verbose=2
+        print(f"Generating master dataset for {arm_dof_type} ({num_master_samples} samples)...")
+        X_master, y_master = ik_solver_prototype.generate_training_data(num_master_samples)
+    elif arm_dof_type == "4dof_spatial":
+        ik_solver_prototype = InverseKinematics4DOFSpatial(
+            fk_dh_model=fk_dh_model_instance,
+            joint_angle_limits=active_joint_limits,
+            model_type='tensorflow'  # Placeholder for data gen
         )
-        training_time = time.time() - start_time
+        print(f"Generating master dataset for {arm_dof_type} ({num_master_samples} samples)...")
+        X_master, y_master = ik_solver_prototype.generate_training_data(num_master_samples)
+    else:
+        raise ValueError("Invalid arm_dof_type")
 
-        #Save model
-        model_path = f'{trained_models_dir}/model_3dof_{framework}.keras'
-        model_3dof.save_model(model_path)
+    if X_master.shape[0] == 0:
+        print(f"No data generated for {arm_dof_type}. Skipping.")
+        return pd.DataFrame()
 
-        #Evaluate on test points
-        errors = []
-        inference_times = []
+    X_train_main, X_test_main, y_train_main, y_test_main = train_test_split(
+        X_master, y_master, test_size=0.25, random_state=42
+    )
+    print(
+        f"{arm_dof_type} Master Dataset: {X_master.shape[0]} samples. Using {X_test_main.shape[0]} for global testing.")
 
-        for point in points_3dof:
-            #Measure inference time
-            start_time = time.time()
-            predicted_angles = model_3dof.predict(point)
-            inference_time = (time.time() - start_time) * 1000  # Convert to ms
-            inference_times.append(inference_time)
+    for framework in frameworks:
+        print(f"\n--- Testing {arm_dof_type} with {framework} ---")
+        if arm_dof_type == "3dof_planar":
+            ik_solver = InverseKinematics3DOFPlanar(
+                fk_dh_model=fk_dh_model_instance,
+                fixed_base_rotation_rad=fixed_base_rot_for_3dof,
+                joint_angle_limits=active_joint_limits,
+                model_type=framework, nn_hidden_layers=nn_arch_config
+            )
+        else:  # 4dof_spatial
+            ik_solver = InverseKinematics4DOFSpatial(
+                fk_dh_model=fk_dh_model_instance,
+                joint_angle_limits=active_joint_limits,
+                model_type=framework, nn_hidden_layers=nn_arch_config
+            )
 
-            #Calculate error
-            error = model_3dof.verify_accuracy(point, predicted_angles)
-            errors.append(error)
+        model_save_dir = os.path.join(trained_models_base_perf_dir, f"{arm_dof_type}_{framework}")
 
-        #Calculate statistics
-        mean_error = np.mean(errors)
-        max_error = np.max(errors)
-        accuracy_percentage = np.mean([error < 0.5 for error in errors]) * 100
-        mean_inference_time = np.mean(inference_times)
+        print(f"Training {arm_dof_type} {framework} model...")
+        t_start_train = time.time()
+        nn_history, train_cart_metrics = ik_solver.train(
+            X_train_main.copy(), y_train_main.copy(), epochs=train_epochs, verbose=0  # Less verbose during perf test
+        )
+        time_train_s = time.time() - t_start_train
+        ik_solver.save_model(model_save_dir)
+        print(f"  Training complete. Internal test metrics: {train_cart_metrics}")
 
-        #Add to results
-        results_3dof = pd.concat([results_3dof, pd.DataFrame([{
-            'Framework': framework,
-            'Training Time (s)': training_time,
-            'Inference Time (ms)': mean_inference_time,
-            'Mean Error (mm)': mean_error,
-            'Max Error (mm)': max_error,
-            'Accuracy < 0.5mm (%)': accuracy_percentage
-        }])], ignore_index=True)
+        # Evaluate on Global Test Set
+        errors_nn_mm, times_nn_ms = [], []
+        errors_nr_mm, times_nr_ms = [], []
 
-        print(f"3-DOF {framework} model evaluation:")
-        print(f"  Training time: {training_time:.2f} s")
-        print(f"  Mean inference time: {mean_inference_time:.2f} ms")
-        print(f"  Mean error: {mean_error:.4f} mm")
-        print(f"  Max error: {max_error:.4f} mm")
-        print(f"  Accuracy < 0.5mm: {accuracy_percentage:.2f}%")
+        if X_test_main.shape[0] > 0:
+            for i in range(X_test_main.shape[0]):
+                target_ee_pos = X_test_main[i]
 
-    #Save results to CSV
-    results_4dof.to_csv(f'{results_dir}/results_4dof.csv', index=False)
-    results_3dof.to_csv(f'{results_dir}/results_3dof.csv', index=False)
+                t_s_nn = time.time()
+                angles_nn = ik_solver.predict(target_ee_pos)
+                times_nn_ms.append((time.time() - t_s_nn) * 1000)
+                err_nn = ik_solver.verify_accuracy(target_ee_pos, angles_nn)
+                errors_nn_mm.append(err_nn)
 
-    return results_4dof, results_3dof
+                if run_nr and hasattr(ik_solver, 'newton_raphson_minimization'):
+                    t_s_nr = time.time()
+                    angles_nr = ik_solver.newton_raphson_minimization(
+                        target_ee_pos, angles_nn, max_iter=nr_iter, tol_mm=nr_tol
+                    )
+                    times_nr_ms.append((time.time() - t_s_nr) * 1000)
+                    err_nr = ik_solver.verify_accuracy(target_ee_pos, angles_nr)
+                    errors_nr_mm.append(err_nr)
 
+            row = {
+                'Framework': framework, 'DOF_Type': arm_dof_type, 'Train Time (s)': time_train_s,
+                'Mean Infer NN (ms)': np.mean(times_nn_ms) if times_nn_ms else 0,
+                'Mean Err NN (mm)': np.mean(errors_nn_mm) if errors_nn_mm else float('inf'),
+                'Max Err NN (mm)': np.max(errors_nn_mm) if errors_nn_mm else float('inf'),
+                'Acc NN <0.5mm (%)': np.mean([e < 0.5 for e in errors_nn_mm]) * 100 if errors_nn_mm else 0,
+            }
+            if run_nr and hasattr(ik_solver, 'newton_raphson_minimization'):
+                row.update({
+                    'Mean Infer NR (ms)': np.mean(times_nr_ms) if times_nr_ms else 0,
+                    'Mean Err NR (mm)': np.mean(errors_nr_mm) if errors_nr_mm else float('inf'),
+                    'Max Err NR (mm)': np.max(errors_nr_mm) if errors_nr_mm else float('inf'),
+                    'Acc NR <0.5mm (%)': np.mean([e < 0.5 for e in errors_nr_mm]) * 100 if errors_nr_mm else 0,
+                })
+            all_results.append(row)
+            print(f"  Global Test ({framework}): NN Err={row['Mean Err NN (mm)']:.3f}mm", end="")
+            if run_nr and 'Mean Err NR (mm)' in row:
+                print(f", NR Err={row['Mean Err NR (mm)']:.3f}mm")
+            else:
+                print("")  # Newline
 
-def plot_results(results_4dof, results_3dof):
-    """
-        Plot the evaluation results.
-
-        Args:
-            results_4dof (pandas.DataFrame): Results for 4-DOF models
-            results_3dof (pandas.DataFrame): Results for 3-DOF models
-    """
-    #Create results directory
-    os.makedirs(f'{results_dir}', exist_ok=True)
-
-    #Set up figure for 4-DOF results
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    fig.suptitle('4-DOF Model Performance Comparison', fontsize=16)
-
-    #Plot training time
-    axes[0, 0].bar(results_4dof['Framework'], results_4dof['Training Time (s)'])
-    axes[0, 0].set_title('Training Time (s)')
-    axes[0, 0].set_ylabel('Seconds')
-
-    #Plot inference time
-    axes[0, 1].bar(results_4dof['Framework'], results_4dof['Inference Time (ms)'])
-    axes[0, 1].set_title('Inference Time (ms)')
-    axes[0, 1].set_ylabel('Milliseconds')
-
-    #Plot mean error
-    axes[1, 0].bar(results_4dof['Framework'], results_4dof['Mean Error (mm)'])
-    axes[1, 0].set_title('Mean Error (mm)')
-    axes[1, 0].set_ylabel('Millimeters')
-
-    #Plot accuracy percentage
-    axes[1, 1].bar(results_4dof['Framework'], results_4dof['Accuracy < 0.5mm (%)'])
-    axes[1, 1].set_title('Accuracy < 0.5mm (%)')
-    axes[1, 1].set_ylabel('Percentage')
-
-    plt.tight_layout()
-    plt.savefig(f'{results_dir}/4dof_results.png')
-
-    #Set up figure for 3-DOF results
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    fig.suptitle('3-DOF Model Performance Comparison', fontsize=16)
-
-    #Plot training time
-    axes[0, 0].bar(results_3dof['Framework'], results_3dof['Training Time (s)'])
-    axes[0, 0].set_title('Training Time (s)')
-    axes[0, 0].set_ylabel('Seconds')
-
-    #Plot inference time
-    axes[0, 1].bar(results_3dof['Framework'], results_3dof['Inference Time (ms)'])
-    axes[0, 1].set_title('Inference Time (ms)')
-    axes[0, 1].set_ylabel('Milliseconds')
-
-    #Plot mean error
-    axes[1, 0].bar(results_3dof['Framework'], results_3dof['Mean Error (mm)'])
-    axes[1, 0].set_title('Mean Error (mm)')
-    axes[1, 0].set_ylabel('Millimeters')
-
-    #Plot accuracy percentage
-    axes[1, 1].bar(results_3dof['Framework'], results_3dof['Accuracy < 0.5mm (%)'])
-    axes[1, 1].set_title('Accuracy < 0.5mm (%)')
-    axes[1, 1].set_ylabel('Percentage')
-
-    plt.tight_layout()
-    plt.savefig(f'{results_dir}/3dof_results.png')
+    return pd.DataFrame(all_results)
 
 
-def visualize_test_cases(num_cases=3):
-    """
-        Visualize a few test cases for both 4-DOF and 3-DOF models.
+def plot_summary_results(df_results, save_dir):
+    if df_results.empty: return
+    for dof_type in df_results['DOF_Type'].unique():
+        df_plot = df_results[df_results['DOF_Type'] == dof_type]
+        metrics_nn = ['Mean Err NN (mm)', 'Acc NN <0.5mm (%)']
+        metrics_nr = ['Mean Err NR (mm)', 'Acc NR <0.5mm (%)']
 
-        Args:
-            num_cases (int): Number of test cases to visualize
-    """
-    #Generate test points
-    points_4dof, points_3dof = generate_test_points(num_cases)
+        has_nr_data = all(col in df_plot.columns for col in metrics_nr)
 
-    #Create results directory
-    os.makedirs(f'{results_dir}/visualizations', exist_ok=True)
+        fig, axes = plt.subplots(1, 2 if has_nr_data else 1, figsize=(12 if has_nr_data else 7, 6), squeeze=False)
+        fig.suptitle(f"Performance Summary: {dof_type.replace('_', ' ').title()}", fontsize=16)
 
-    #Load the best models (to do: increment a func to receive best MAE and load the model)
+        df_plot.set_index('Framework')[metrics_nn].plot(kind='bar', ax=axes[0, 0], rot=15, title="NN-Only Performance")
+        axes[0, 0].set_ylabel("Error (mm) / Accuracy (%)")
+        axes[0, 0].grid(axis='y', linestyle='--')
 
-    model_4dof = InverseKinematics4DOF(model_type='pytorch')
-    model_4dof.load_model(f'{trained_models_dir}/optimized_model_4dof_pytorch.pt')
+        if has_nr_data:
+            df_plot.set_index('Framework')[metrics_nr].plot(kind='bar', ax=axes[0, 1], rot=15,
+                                                            title="NN + Newton-Raphson")
+            axes[0, 1].set_ylabel("Error (mm) / Accuracy (%)")
+            axes[0, 1].grid(axis='y', linestyle='--')
 
-    model_3dof = InverseKinematics3DOF(model_type='pytorch')
-    model_3dof.load_model(f'{trained_models_dir}/optimized_model_3dof_pytorch.pt')
-
-    #Visualize 4-DOF test cases
-    for i, point in enumerate(points_4dof):
-        predicted_angles = model_4dof.predict(point)
-        error = model_4dof.verify_accuracy(point, predicted_angles)
-
-        fig = model_4dof.visualize_prediction(point, predicted_angles)
-        plt.savefig(f'{results_dir}/visualizations/4dof_case_{i + 1}.png')
+        plt.tight_layout(rect=[0, 0, 1, 0.95])
+        plt.savefig(os.path.join(save_dir, f"summary_plot_{dof_type}.png"))
+        print(f"Plot saved: summary_plot_{dof_type}.png")
         plt.close(fig)
-
-        print(f"4-DOF Test Case {i + 1}:")
-        print(f"  Target position: {point}")
-        print(f"  Predicted angles: {predicted_angles}")
-        print(f"  Error: {error:.4f} mm")
-
-    # Visualize 3-DOF test cases
-    for i, point in enumerate(points_3dof):
-        predicted_angles = model_3dof.predict(point)
-        error = model_3dof.verify_accuracy(point, predicted_angles)
-
-        fig = model_3dof.visualize_prediction(point, predicted_angles)
-        plt.savefig(f'{results_dir}/visualizations/3dof_case_{i + 1}.png')
-        plt.close(fig)
-
-        print(f"3-DOF Test Case {i + 1}:")
-        print(f"  Target position: {point}")
-        print(f"  Predicted angles: {predicted_angles}")
-        print(f"  Error: {error:.4f} mm")
-
-
 
 
 if __name__ == "__main__":
-    # Create results directory
-    os.makedirs(f'{results_dir}', exist_ok=True)
+    print("Starting D-H Based Performance Evaluation Script...")
+    # --- Parameters for the main test run ---
+    EPOCHS = 1000  # Increase for better NN training (e.g., 200-1000)
+    NUM_SAMPLES = 20000  # Increase for robust training (e.g., 50k-200k)
 
-    # Train and evaluate models with reduced parameters for testing
-    # In a real scenario, you would use more epochs and samples
+    # NN Architectures (can be tuned)
+    NN_ARCH_3DOF = (64, 64, 32)
+    NN_ARCH_4DOF = (128, 128, 64, 32)
 
+    RUN_NEWTON_RAPHSON = True  # Set True to test refinement
+    NR_TOLERANCE = 0.01  # Target precision for NR (mm)
+    NR_MAX_ITER = 100
 
-    results_4dof, results_3dof = train_and_evaluate_models(
-            train_epochs=1000,
-            num_samples=20000,
-            test_points=4000
-        )
+    all_run_results = []
 
-    """
-        ik_solver = InverseKinematics4DOF()
-        ik_solver.train(num_samples=10000)
-        angles = ik_solver.predict([150, 100, 50])
-        fig = ik_solver.visualize_prediction([150, 100, 50], angles)
-        fig.savefig('arm_configuration.png')
-    """
+    # --- 3-DOF Planar Evaluation ---
+    # For planar, the base rotation is fixed. Let's test at 0 degrees.
+    results_3dof = run_evaluation_pipeline(
+        arm_dof_type="3dof_planar",
+        fk_dh_model_instance=FK_DH_MODEL_GLOBAL,
+        active_joint_limits=JOINT_LIMITS_3DOF_ACTIVE,
+        fixed_base_rot_for_3dof=np.deg2rad(0.0),  # Base fixed at 0 degrees
+        train_epochs=EPOCHS,
+        num_master_samples=NUM_SAMPLES,
+        nn_arch_config=NN_ARCH_3DOF,
+        run_nr=RUN_NEWTON_RAPHSON,  # NR not typically used/needed for simpler planar
+        nr_tol=NR_TOLERANCE,
+        nr_iter=NR_MAX_ITER
+    )
+    if not results_3dof.empty:
+        all_run_results.append(results_3dof)
 
-    #Plot results
-    plot_results(results_4dof, results_3dof)
+    # --- 4-DOF Spatial Evaluation ---
+    results_4dof = run_evaluation_pipeline(
+        arm_dof_type="4dof_spatial",
+        fk_dh_model_instance=FK_DH_MODEL_GLOBAL,
+        active_joint_limits=JOINT_LIMITS_4DOF_ACTIVE,
+        train_epochs=EPOCHS,
+        num_master_samples=NUM_SAMPLES,
+        nn_arch_config=NN_ARCH_4DOF,
+        run_nr=RUN_NEWTON_RAPHSON,
+        nr_tol=NR_TOLERANCE,
+        nr_iter=NR_MAX_ITER
+    )
+    if not results_4dof.empty:
+        all_run_results.append(results_4dof)
 
+    if all_run_results:
+        final_summary_df = pd.concat(all_run_results, ignore_index=True)
+        print("\n\n--- FINAL SUMMARY OF ALL RUNS ---")
+        print(final_summary_df.to_string())
+        summary_csv_path = os.path.join(results_dir_perf, "final_performance_summary_dh.csv")
+        final_summary_df.to_csv(summary_csv_path, index=False)
+        print(f"Final summary CSV saved to: {summary_csv_path}")
+        plot_summary_results(final_summary_df, results_dir_perf)
+    else:
+        print("No results generated from any pipeline.")
 
-    #visualize_test_cases(num_cases=3)  # Reduced for testing
-    #visualize_test_cases(num_cases=3)
+    print("\nD-H Based Performance Evaluation Script Finished.")
+    # plt.show() # If you want to see plots interactively
