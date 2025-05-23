@@ -7,282 +7,135 @@ random joint configurations and calculating their corresponding end-effector pos
 
 import numpy as np
 
-from utils.Forward_kinematics import ForwardKinematics
+from utils.Forward_kinematics import ForwardKinematicsDH
 
 
-class DataGenerator:
+class DataGeneratorDH:
     """
-        Generate training and validation data for inverse kinematics neural networks.
+    Generates training data (End-Effector Poses, Joint Angles) using D-H based FK.
     """
 
-    def __init__(self, link_lengths=None, angle_limits=None):
+    def __init__(self, fk_dh_model, num_dof, joint_angle_limits=None):
         """
-            Initialize the data generator with link lengths and joint angle limits.
-
         Args:
-            link_lengths (list): List of link lengths [l0, l1, l2, l3, ...] in mm
-                                Default is [50, 100, 100, 100] for a typical small robotic arm
-            angle_limits (list): List of tuples [(min_angle, max_angle)] for each joint in radians
-                                Default limits are set to reasonable ranges for each joint
+            fk_dh_model (ForwardKinematicsDH): An instance of the D-H FK model.
+            num_dof (int): Number of degrees of freedom to generate data for (3 or 4).
+            joint_angle_limits (list of tuples): [(min_rad, max_rad), ...] for each joint.
+                                                 Length must match num_dof.
         """
-        self.link_lengths = link_lengths if link_lengths is not None else [50, 100, 100, 100]
+        self.fk_model = fk_dh_model
+        self.num_dof = num_dof
 
-        # Default angle limits if not provided
-        if angle_limits is None:
-            # Format: [(min_angle_joint0, max_angle_joint0), (min_angle_joint1, max_angle_joint1), ...]
-            self.angle_limits = [
-                (-np.pi, np.pi),  # Base rotation (full 360 degrees)
-                (-np.pi / 2, np.pi / 2),  # Shoulder joint (180 degrees)
-                (-np.pi / 2, np.pi / 2),  # Elbow joint (180 degrees)
-                (-np.pi / 2, np.pi / 2),  # Wrist joint (180 degrees)
-                (-np.pi / 2, np.pi / 2),  # Wrist rotation (180 degrees)
-                (-np.pi / 2, np.pi / 2)  # Gripper (180 degrees)
-            ]
+        if joint_angle_limits is None:
+            # Default limits (in radians) - ADJUST THESE TO YOUR ARM'S ACTUAL LIMITS
+            if self.num_dof == 3:  # Shoulder, Elbow, Wrist_Pitch
+                self.limits = [
+                    (-np.pi / 2, np.pi / 2),  # q2_shoulder (e.g., -90 to +90 deg)
+                    (0, np.pi * (150 / 180)),  # q3_elbow (e.g., 0 to 150 deg, relative to previous link)
+                    (-np.pi / 2, np.pi / 2)  # q4_wrist_pitch
+                ]
+            elif self.num_dof == 4:  # Base, Shoulder, Elbow, Wrist_Pitch
+                self.limits = [
+                    (-np.pi, np.pi),  # q1_base (e.g., -180 to +180 deg, or 0-180 if limited)
+                    (-np.pi / 2, np.pi / 2),  # q2_shoulder
+                    (0, np.pi * (150 / 180)),  # q3_elbow
+                    (-np.pi / 2, np.pi / 2)  # q4_wrist_pitch
+                ]
+            else:
+                raise ValueError("num_dof must be 3 or 4 for this generator.")
         else:
-            self.angle_limits = angle_limits
+            if len(joint_angle_limits) != self.num_dof:
+                raise ValueError(
+                    f"Length of joint_angle_limits ({len(joint_angle_limits)}) must match num_dof ({self.num_dof}).")
+            self.limits = joint_angle_limits
 
-        self.fk = ForwardKinematics(link_lengths=self.link_lengths)
+        print(f"DataGeneratorDH initialized for {self.num_dof}-DOF with joint limits (radians):")
+        for i, lim in enumerate(self.limits):
+            print(
+                f"  Joint {i + 1}: Min={lim[0]:.2f} rad ({np.degrees(lim[0]):.1f} deg), Max={lim[1]:.2f} rad ({np.degrees(lim[1]):.1f} deg)")
 
-    def generate_random_angles(self, dof):
+    def _generate_random_joint_angles(self):
+        """Generates a single set of random joint angles within specified limits."""
+        return np.array([np.random.uniform(low, high) for low, high in self.limits])
+
+    def generate_data(self, num_samples, fixed_base_rotation_for_3dof_rad=None):
         """
-            Generate random joint angles within the specified limits.
+        Generates dataset (X: EE poses, y: joint angles).
 
         Args:
-            dof (int): Degrees of freedom (number of joints)
+            num_samples (int): Number of data points to generate.
+            fixed_base_rotation_for_3dof_rad (float, optional):
+                If num_dof is 3, this specifies the fixed base rotation (q1) to use.
+                If None, and num_dof is 3, an error will be raised if the FK expects it.
+                The `forward_kinematics_3dof_planar` method in `ForwardKinematicsDH`
+                takes `base_rotation_rad` as an argument.
 
         Returns:
-            numpy.ndarray: Array of random joint angles
+            tuple: (X_data, y_data)
+                   X_data: numpy array of shape (num_samples, 3) for EE positions (x,y,z).
+                   y_data: numpy array of shape (num_samples, num_dof) for joint angles.
         """
-        angles = np.zeros(dof)
-        for i in range(dof):
-            min_angle, max_angle = self.angle_limits[i]
-            angles[i] = np.random.uniform(min_angle, max_angle)
-        return angles
+        if self.num_dof == 3 and fixed_base_rotation_for_3dof_rad is None:
+            print(
+                "Warning: Generating 3-DOF data. `fixed_base_rotation_for_3dof_rad` is None. Assuming 0.0 for FK calculation if needed by FK method.")
+            fixed_base_rotation_for_3dof_rad = 0.0
+
+        X_data = []
+        y_data = []
+
+        for _ in range(num_samples):
+            joint_angles = self._generate_random_joint_angles()
+
+            if self.num_dof == 3:
+                # FK for 3-DOF planar takes 3 angles (sh,elb,wr) + fixed base rotation
+                ee_pos = self.fk_model.forward_kinematics_3dof_planar(
+                    joint_angles,  # These are q2, q3, q4
+                    base_rotation_rad=fixed_base_rotation_for_3dof_rad
+                )
+                y_data.append(joint_angles)  # Store the 3 active joint angles
+            elif self.num_dof == 4:
+                # FK for 4-DOF takes all 4 angles (base,sh,elb,wr)
+                ee_pos = self.fk_model.forward_kinematics_4dof_spatial(joint_angles)
+                y_data.append(joint_angles)  # Store all 4 active joint angles
+            else:
+                continue  # Should not happen with initial checks
+
+            X_data.append(ee_pos)
+
+        return np.array(X_data), np.array(y_data)
 
 
+# Example Usage
+if __name__ == '__main__':
+    # CRITICAL: Use the same link parameters as in ForwardKinematicsDH for consistency
+    fk_dh = ForwardKinematicsDH(d1=70.0, a2=100.0, a3=100.0, a4=60.0)
 
-    def generate_dataset_4dof(self, num_samples):
-        """
-        Generate dataset for 4-DOF robotic arm (3D space).
+    # --- 3-DOF Planar Data Generation ---
+    # Define joint limits for the 3 active joints (shoulder, elbow, wrist_pitch)
+    # Example: q2_shoulder, q3_elbow, q4_wrist
+    limits_3dof = [
+        (-np.pi / 2, np.pi / 2),  # Shoulder pitch
+        (0, np.pi * 150 / 180),  # Elbow pitch (e.g. 0 to 150 deg)
+        (-np.pi / 2, np.pi / 2)  # Wrist pitch
+    ]
+    data_gen_3dof = DataGeneratorDH(fk_dh_model=fk_dh, num_dof=3, joint_angle_limits=limits_3dof)
+    # For 3-DOF planar, specify the fixed base rotation (q1)
+    X3, y3 = data_gen_3dof.generate_data(num_samples=5, fixed_base_rotation_for_3dof_rad=np.deg2rad(0))
+    print("\n--- 3-DOF Planar Data (Base fixed at 0 deg) ---")
+    for i in range(len(X3)):
+        print(f"Joints (deg): {[f'{np.degrees(a):.1f}' for a in y3[i]]} -> EE Pos (mm): {[f'{p:.2f}' for p in X3[i]]}")
 
-        Args:
-            num_samples (int): Number of samples to generate
-
-        Returns:
-            tuple: (X, y) where X is end-effector positions and y is joint angles
-        """
-        # Initialize arrays to store data
-        X = np.zeros((num_samples, 3))  # End-effector positions (x, y, z)
-        y = np.zeros((num_samples, 4))  # Joint angles (θ0, θ1, θ2, θ3)
-
-        for i in range(num_samples):
-            while True:
-                angles = self.generate_random_angles(4)
-                x, y_pos, z = self.fk.forward_kinematics_4dof(angles)
-
-                # Filter out positions too close to base or singularities
-                dist_from_base = np.sqrt(x ** 2 + y_pos ** 2 + z ** 2)
-                if dist_from_base > 50:  # Minimum 50mm from base
-                    y[i] = angles
-                    X[i] = [x, y_pos, z]
-                    break
-
-        return X, y
-
-    def generate_grid_dataset_4dof(self, grid_size=20):
-        total_length = sum(self.link_lengths)
-        x_range = np.linspace(-total_length, total_length, grid_size)
-        y_range = np.linspace(-total_length, total_length, grid_size)
-        z_range = np.linspace(0, total_length, grid_size)
-        X_valid = []
-        y_valid = []
-        for x in x_range:
-            for y in y_range:
-                for z in z_range:
-                    dist = np.sqrt(x ** 2 + y ** 2 + z ** 2)
-                    if 50 <= dist <= total_length:
-                        for _ in range(5):  # Try multiple configurations
-                            angles = self.generate_random_angles(4)
-                            refined_angles = self.refine_angles_4dof(angles, [x, y, z])
-                            x_pos, y_pos, z_pos = self.fk.forward_kinematics_4dof(refined_angles)
-                            error = np.sqrt((x - x_pos) ** 2 + (y - y_pos) ** 2 + (z - z_pos) ** 2)
-                            if error < 1.0:
-                                X_valid.append([x, y, z])
-                                y_valid.append(refined_angles)
-                                break
-        return np.array(X_valid), np.array(y_valid)
-
-    def refine_angles_4dof(self, initial_angles, target_position, max_iterations=100, learning_rate=0.01):
-        angles = np.array(initial_angles)
-        target_x, target_y, target_z = target_position
-        for _ in range(max_iterations):
-            x, y, z = self.fk.forward_kinematics_4dof(angles)
-            error = np.array([target_x - x, target_y - y, target_z - z])
-            if np.linalg.norm(error) < 0.1:
-                break
-            jacobian = np.zeros((3, 4))
-            epsilon = 1e-6
-            for j in range(4):
-                angles_perturbed = angles.copy()
-                angles_perturbed[j] += epsilon
-                x_p, y_p, z_p = self.fk.forward_kinematics_4dof(angles_perturbed)
-                jacobian[:, j] = (np.array([x_p, y_p, z_p]) - np.array([x, y, z])) / epsilon
-            try:
-                angles += learning_rate * np.linalg.pinv(jacobian) @ error
-                for j in range(4):
-                    angles[j] = np.clip(angles[j], self.angle_limits[j][0], self.angle_limits[j][1])
-            except np.linalg.LinAlgError:
-                angles += np.random.uniform(-0.1, 0.1, 4)
-        return angles
-
-    def generate_dataset_3dof(self, num_samples):
-        """
-        Generate dataset for 3-DOF robotic arm (2D space).
-
-        Args:
-            num_samples (int): Number of samples to generate
-
-        Returns:
-            tuple: (X, y) where X is end-effector positions and y is joint angles
-        """
-        # Initialize arrays to store data
-        X = np.zeros((num_samples, 2))  # End-effector positions (x, y)
-        y = np.zeros((num_samples, 3))  # Joint angles (θ0, θ1, θ2)
-
-        for i in range(num_samples):
-            # Generate random joint angles
-            angles = self.generate_random_angles(3)
-            y[i] = angles
-
-            # Calculate forward kinematics
-            x, y_pos = self.fk.forward_kinematics_3dof(angles)
-            X[i] = [x, y_pos]
-
-        return X, y
-
-    def generate_grid_dataset_3dof(self, grid_size=20):
-        """
-        Generate a grid-based dataset for 3-DOF robotic arm to ensure coverage of workspace.
-
-        Args:
-            grid_size (int): Number of points along each dimension of the grid
-
-        Returns:
-            tuple: (X, y) where X is end-effector positions and y is joint angles
-        """
-        # Calculate the total arm length to determine workspace boundaries
-        total_length = sum(self.link_lengths[:3])
-
-        # Create a grid of points in the 2D workspace
-        x_range = np.linspace(-total_length, total_length, grid_size)
-        y_range = np.linspace(-total_length, total_length, grid_size)
-
-        # Initialize arrays to store valid points
-        X_valid = []
-        y_valid = []
-
-        # For each grid point, try to find a valid joint configuration
-        for x in x_range:
-            for y in y_range:
-                # Check if the point is within the reachable workspace
-                distance = np.sqrt(x ** 2 + y ** 2)
-                if distance <= total_length and distance >= abs(self.link_lengths[0] - self.link_lengths[1] - self.link_lengths[2]):
-                    # Try multiple random configurations to find one that reaches this point
-                    for i in range(10):  # Try up to 10 random starting points
-                        angles = self.generate_random_angles(3)
-
-                        # Use numerical optimization to refine the angles
-                        # This is a simplified approach; in practice, you might use more sophisticated IK methods
-                        refined_angles = self.refine_angles_3dof(angles, [x, y], max_iterations=100)
-
-                        # Calculate the end effector position with the refined angles
-                        x_pos, y_pos = self.fk.forward_kinematics_3dof(refined_angles)
-
-                        # Check if the refined solution is close enough to the target
-                        error = np.sqrt((x - x_pos) ** 2 + (y - y_pos) ** 2)
-                        if error < 1.0:  # 1mm tolerance
-                            X_valid.append([x, y])
-                            y_valid.append(refined_angles)
-                            break
-
-        return np.array(X_valid), np.array(y_valid)
-
-    def refine_angles_3dof(self, initial_angles, target_position, max_iterations=100, learning_rate=0.01):
-        """
-            Refine joint angles to reach a target position using gradient descent.
-
-            Args:
-                initial_angles (list): Initial joint angles [θ0, θ1, θ2]
-                target_position (list): Target end-effector position [x, y]
-                max_iterations (int): Maximum number of iterations
-                learning_rate (float): Learning rate for gradient descent
-
-        Returns:
-            numpy.ndarray: Refined joint angles
-        """
-        angles = np.array(initial_angles)
-        target_x, target_y = target_position
-
-        for _ in range(max_iterations):
-            # Calculate current end effector position
-            x, y = self.fk.forward_kinematics_3dof(angles)
-
-            # Calculate error
-            error_x = target_x - x
-            error_y = target_y - y
-            error = np.sqrt(error_x ** 2 + error_y ** 2)
-
-            # If error is small enough, return the angles
-            if error < 0.1:  # 0.1mm tolerance
-                break
-
-            # Calculate Jacobian numerically
-            jacobian = np.zeros((2, 3))
-            epsilon = 1e-6
-
-            for j in range(3):
-                # Perturb each angle slightly
-                angles_perturbed = angles.copy()
-                angles_perturbed[j] += epsilon
-
-                # Calculate perturbed position
-                x_perturbed, y_perturbed = self.fk.forward_kinematics_3dof(angles_perturbed)
-
-                # Calculate partial derivatives
-                jacobian[0, j] = (x_perturbed - x) / epsilon
-                jacobian[1, j] = (y_perturbed - y) / epsilon
-
-            # Calculate pseudo-inverse of Jacobian
-            try:
-                jacobian_pinv = np.linalg.pinv(jacobian)
-
-                # Update angles using the Jacobian
-                delta_angles = jacobian_pinv @ np.array([error_x, error_y])
-                angles += learning_rate * delta_angles
-
-                # Ensure angles stay within limits
-                for j in range(3):
-                    angles[j] = np.clip(angles[j], self.angle_limits[j][0], self.angle_limits[j][1])
-            except np.linalg.LinAlgError:
-                # If matrix inversion fails, make a small random adjustment
-                angles += np.random.uniform(-0.1, 0.1, 3)
-
-        return angles
-
-
-# Example usage
-if __name__ == "__main__":
-    # Create a data generator with default parameters
-    data_gen = DataGenerator()
-
-    # Generate datasets
-
-    X_4dof, y_4dof = data_gen.generate_dataset_4dof(1000)
-    X_3dof, y_3dof = data_gen.generate_dataset_3dof(1000)
-
-    print(f"4-DOF dataset: {X_4dof.shape}, {y_4dof.shape}")
-    print(f"3-DOF dataset: {X_3dof.shape}, {y_3dof.shape}")
-
-    # Generate grid-based dataset for 3-DOF
-    X_grid, y_grid = data_gen.generate_grid_dataset_3dof(grid_size=10)
-    print(f"3-DOF grid dataset: {X_grid.shape}, {y_grid.shape}")
+    # --- 4-DOF Spatial Data Generation ---
+    # Define joint limits for the 4 active joints (base, shoulder, elbow, wrist_pitch)
+    # Example: q1_base, q2_shoulder, q3_elbow, q4_wrist
+    limits_4dof = [
+        (-np.pi, np.pi),  # Base rotation (full circle)
+        (-np.pi / 2, np.pi / 2),  # Shoulder pitch
+        (0, np.pi * 150 / 180),  # Elbow pitch
+        (-np.pi / 2, np.pi / 2)  # Wrist pitch
+    ]
+    data_gen_4dof = DataGeneratorDH(fk_dh_model=fk_dh, num_dof=4, joint_angle_limits=limits_4dof)
+    X4, y4 = data_gen_4dof.generate_data(num_samples=5)
+    print("\n--- 4-DOF Spatial Data ---")
+    for i in range(len(X4)):
+        print(f"Joints (deg): {[f'{np.degrees(a):.1f}' for a in y4[i]]} -> EE Pos (mm): {[f'{p:.2f}' for p in X4[i]]}")
