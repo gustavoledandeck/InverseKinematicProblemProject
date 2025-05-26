@@ -6,7 +6,8 @@ random joint configurations and calculating their corresponding end-effector pos
 """
 
 import numpy as np
-
+import os
+import pandas as pd
 from utils.Forward_kinematics import ForwardKinematicsDH
 
 
@@ -27,18 +28,18 @@ class DataGeneratorDH:
         self.num_dof = num_dof
 
         if joint_angle_limits is None:
-            # Default limits (in radians) - ADJUST THESE TO YOUR ARM'S ACTUAL LIMITS
+
             if self.num_dof == 3:  # Shoulder, Elbow, Wrist_Pitch
                 self.limits = [
-                    (-np.pi / 2, np.pi / 2),  # q2_shoulder (e.g., -90 to +90 deg)
-                    (0, np.pi * (150 / 180)),  # q3_elbow (e.g., 0 to 150 deg, relative to previous link)
+                    (-np.pi / 4, np.pi / 4),  # q2_shoulder (e.g., -45 to +45 deg)
+                    (0, np.pi * (120 / 180)),  # q3_elbow (e.g., 0 to 120 deg)
                     (-np.pi / 2, np.pi / 2)  # q4_wrist_pitch
                 ]
             elif self.num_dof == 4:  # Base, Shoulder, Elbow, Wrist_Pitch
                 self.limits = [
-                    (-np.pi, np.pi),  # q1_base (e.g., -180 to +180 deg, or 0-180 if limited)
-                    (-np.pi / 2, np.pi / 2),  # q2_shoulder
-                    (0, np.pi * (150 / 180)),  # q3_elbow
+                    (0, np.pi * (120 / 180)),  # q1_base (e.g., 0 to +120 deg)
+                    (-np.pi / 4, np.pi / 4),  # q2_shoulder
+                    (0, np.pi * (120 / 180)),  # q3_elbow
                     (-np.pi / 2, np.pi / 2)  # q4_wrist_pitch
                 ]
             else:
@@ -101,6 +102,14 @@ class DataGeneratorDH:
                 continue  # Should not happen with initial checks
 
             X_data.append(ee_pos)
+            #dataset = []
+            #dataset.append(X_data)
+            #dataset.append(y_data)
+            #current_script_dir = os.path.dirname(os.path.abspath(__file__))
+            #dataset_dir = os.path.join(current_script_dir, "dataset")
+            #final_dataset_df = pd.concat(dataset, ignore_index=True)
+            #summary_csv_path = os.path.join(dataset_dir, "dataset.csv")
+            #final_dataset_df.to_csv(summary_csv_path, index=False)
 
         return np.array(X_data), np.array(y_data)
 
@@ -114,8 +123,8 @@ if __name__ == '__main__':
     # Define joint limits for the 3 active joints (shoulder, elbow, wrist_pitch)
     # Example: q2_shoulder, q3_elbow, q4_wrist
     limits_3dof = [
-        (-np.pi / 2, np.pi / 2),  # Shoulder pitch
-        (0, np.pi * 150 / 180),  # Elbow pitch (e.g. 0 to 150 deg)
+        (-np.pi / 4, np.pi / 4),  # Shoulder pitch
+        (0, np.pi * (120 / 180)),  # Elbow pitch (e.g. 0 to 150 deg)
         (-np.pi / 2, np.pi / 2)  # Wrist pitch
     ]
     data_gen_3dof = DataGeneratorDH(fk_dh_model=fk_dh, num_dof=3, joint_angle_limits=limits_3dof)
@@ -129,9 +138,9 @@ if __name__ == '__main__':
     # Define joint limits for the 4 active joints (base, shoulder, elbow, wrist_pitch)
     # Example: q1_base, q2_shoulder, q3_elbow, q4_wrist
     limits_4dof = [
-        (-np.pi, np.pi),  # Base rotation (full circle)
-        (-np.pi / 2, np.pi / 2),  # Shoulder pitch
-        (0, np.pi * 150 / 180),  # Elbow pitch
+        (0, np.pi * (120 / 180)),  # Base rotation (full circle)
+        (-np.pi / 4, np.pi / 4),  # Shoulder pitch
+        (0, np.pi * (120 / 180)),  # Elbow pitch
         (-np.pi / 2, np.pi / 2)  # Wrist pitch
     ]
     data_gen_4dof = DataGeneratorDH(fk_dh_model=fk_dh, num_dof=4, joint_angle_limits=limits_4dof)

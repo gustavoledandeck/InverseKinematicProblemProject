@@ -134,12 +134,20 @@ class ForwardKinematicsDH:
 
     def get_all_joint_positions_4dof(self, joint_angles_rad):
         """
-        Calculates the 3D position of each joint origin and the EE for visualization.
-        P0 = origin of frame 0 (base)
-        P1 = origin of frame 1 (at J2 - shoulder)
-        P2 = origin of frame 2 (at J3 - elbow)
-        P3 = origin of frame 3 (at J4 - wrist)
-        P_EE = end-effector point
+            Calculates the 3D position of each joint origin and the EE for visualization.
+            Args:
+                P0 = origin of frame 0 (base)
+                P1 = origin of frame 1 (at J2 - shoulder)
+                P2 = origin of frame 2 (at J3 - elbow)
+                P3 = origin of frame 3 (at J4 - wrist)
+                P_EE = end-effector point
+
+            Return:
+                p_base = T0 J1 origin list
+                p_shoulder = T0 J2 origin list
+                p_elbow = T0 J3 origin list
+                p_wrist = T0 J4 origin list
+                p_ee = T0 EE pt list
         """
         if len(joint_angles_rad) != 4:
             raise ValueError("Requires 4 joint angles.")
