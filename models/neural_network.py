@@ -13,7 +13,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.neural_network import MLPRegressor
 import joblib
-
+from scipy.optimize import lbfgsb
 # This is the sketch of tensorflowmodel implementation version one
 
 class TensorFlowModel:
@@ -21,7 +21,7 @@ class TensorFlowModel:
     NNA model for IK with tensorflow
     """
 
-    def __init__(self, input_dimension, output_dimension, hidden_layers=(128, 64, 32), activation='swish'):
+    def __init__(self, input_dimension, output_dimension, hidden_layers=(128, 64, 32), activation='relu'):
         """
             This is the constructor of TF model.
             Initialize the tensorflow model.
@@ -53,7 +53,8 @@ class TensorFlowModel:
         :return:
             tf.keras.Model ----> Compiled TensorFlow model
         """
-
+        #initializer = tf.keras.initializers.RandomUniform()
+        #initializer = keras.initializers.RandomNormal()
         model = keras.Sequential()
 
 
@@ -61,28 +62,38 @@ class TensorFlowModel:
 
         model.add(keras.layers.Input(shape=(self.input_dimension,)))
 
+
         #Hidden layers
         for units in self.hidden_layers:
             model.add(keras.layers.Dense(
                 units,
                 activation=self.activation,
-                kernel_regularizer=keras.regularizers.l2(0.001)  # ADDED: L2 Kernel Regularization
+                kernel_regularizer=keras.regularizers.L1L2(l1=0.00001, l2=0.0001),
+                bias_regularizer=keras.regularizers.L2(0.0001),
+                activity_regularizer=keras.regularizers.L2(0.00001)
+                #,
+                #kernel_initializer=initializer,
+                #bias_initializer=initializer
             ))
-            model.add(keras.layers.BatchNormalization())  # Batch Normalization helps stabilize training
-            model.add(keras.layers.Dropout(0.3))  # ADDED/MODIFIED: Dropout for regularization
+            model.add(keras.layers.BatchNormalization())
+            model.add(keras.layers.Dropout(0.3))
 
             # Output layer
-            # Trying linear approach to see if it fits better to this problem
+
         model.add(keras.layers.Dense(self.output_dimension, activation=self.activation))
+
+
 
         #compile
         model.compile(
-            optimizer=keras.optimizers.Adam(
+            optimizer=keras.optimizers.AdamW(
                 learning_rate=keras.optimizers.schedules.ExponentialDecay(
-                    initial_learning_rate=0.001,
+                    initial_learning_rate=0.0001,
                     decay_steps=10000,
                     decay_rate=0.9
-                )
+                ),
+                epsilon=10**(-12)
+
             ),
                 loss='mse',
                 metrics=['mae']
@@ -257,7 +268,7 @@ class PyTorchModel:
     def __init__(self, input_dimension, output_dimension,
                  hidden_layers=(128, 64, 32),
                  activation='relu',
-                 learning_rate=0.001,
+                 learning_rate=0.0001,
                  weight_decay=1e-4):
         """
             Initialize the PyTorch model.
@@ -291,12 +302,18 @@ class PyTorchModel:
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model = self._build_model().to(self.device)
 
-        # Define loss function and optimizer
+
+
+
+
         self.criterion = nn.MSELoss()
-        self.optimizer = torch.optim.Adam(
+
+
+        self.optimizer = torch.optim.AdamW(
             self.model.parameters(),
             lr=self.learning_rate,
-            weight_decay=self.weight_decay
+            weight_decay=self.weight_decay,
+            eps=10**(-12)
         )
 
     def _build_model(self):
@@ -385,6 +402,7 @@ class PyTorchModel:
         patience_counter = 0
         best_model_state = None
 
+
         #Train the model
 
         for epoch in range(epochs):
@@ -404,12 +422,17 @@ class PyTorchModel:
 
                 train_loss += loss.item()
             """
+
+
             for inputs, targets in train_loader:
                 self.optimizer.zero_grad()  # Zero gradients
+
                 outputs = self.model(inputs)  # Forward pass
                 loss = self.criterion(outputs, targets)  # Compute loss
-                loss.backward()  # Backward pass
+                loss.backward() # Backward pass
+
                 self.optimizer.step()  # Update weights
+
                 train_loss += loss.item() * inputs.size(0)
 
             train_loss /= len(train_loader.dataset)
@@ -553,7 +576,7 @@ class PyTorchModel:
         self.input_dimension = checkpoint['input_dimension']
         self.output_dimension = checkpoint['output_dimension']
         self.hidden_layers = checkpoint['hidden_layers']
-        activation_name = checkpoint.get('activation', 'ReLU').lower()  # Default to ReLU if not saved
+        activation_name = checkpoint.get('activation', 'ReLU').lower()
         self.learning_rate = checkpoint.get('learning_rate', 0.001)
         self.weight_decay = checkpoint.get('weight_decay', 1e-4)
 
@@ -572,13 +595,15 @@ class PyTorchModel:
         self.model.eval()
         print(f"PyTorch model loaded from {model_path}")
 
-        # Re-initialize optimizer if further training is intended, otherwise not strictly needed for inference
-        self.optimizer = torch.optim.Adam(
+
+        self.optimizer = torch.optim.AdamW(
             self.model.parameters(),
             lr=self.learning_rate,
-            weight_decay=self.weight_decay
+            weight_decay=self.weight_decay,
+            eps=10**(-12)
         )
         self.criterion = nn.MSELoss()
+        #self.criterion = nn.BCELoss()
         """
         #Load scalers
         input_scaler_data = np.load(os.path.join(os.path.dirname(model_path), 'pt_input_scaler.npy'))
@@ -603,10 +628,11 @@ class ScikitLearnModel:
     """
 
     def __init__(self, input_dimension, output_dimension,
-                 hidden_layer_sizes=(256, 128),
+                 hidden_layer_sizes=(512, 256),
                  activation='relu',
-                 alpha=0.01,
-                 learning_rate_init=0.001,
+                 alpha=0.0001,
+                 solver='lbfgs',
+                 learning_rate_init=0.0001,
                  max_iter=1000, # Max iterations for solver
                  n_iter_no_change=30):
         """
@@ -630,9 +656,9 @@ class ScikitLearnModel:
         self.model = MLPRegressor(
             hidden_layer_sizes=hidden_layer_sizes,
             activation=activation,
-            solver='adam',
+            solver='lbfgs',
             alpha=alpha,  # L2 penalty (regularization term)
-            batch_size='auto',
+            batch_size=64,
             learning_rate='adaptive',  # Learning rate schedule
             learning_rate_init=learning_rate_init,
             max_iter=max_iter,
@@ -640,6 +666,7 @@ class ScikitLearnModel:
             random_state=42,  # For reproducibility
             early_stopping=True,  # Enable early stopping
             validation_fraction=0.1,
+
             n_iter_no_change=n_iter_no_change,  # Number of iterations with no improvement to wait before stopping
             verbose=False  # Set to True or an int for verbosity during training
         )
