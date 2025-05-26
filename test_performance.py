@@ -23,18 +23,21 @@ os.makedirs(results_dir_perf, exist_ok=True)
 trained_models_base_perf_dir = os.path.join(current_script_dir, "trained_models_perf_dh_test")
 os.makedirs(trained_models_base_perf_dir, exist_ok=True)
 
-# These MUST be accurate for your physical arm.
-D1_BASE_SHOULDER_Z = 70.0
+
+D1_BASE_SHOULDER_Z = 40.0
 A2_SHOULDER_ELBOW = 100.0
-A3_ELBOW_WRIST = 100.0
-A4_WRIST_EE = 60.0
+A3_ELBOW_WRIST = 130.0
+A4_WRIST_EE = 30.0
 FK_DH_MODEL_GLOBAL = ForwardKinematicsDH(d1=D1_BASE_SHOULDER_Z, a2=A2_SHOULDER_ELBOW, a3=A3_ELBOW_WRIST, a4=A4_WRIST_EE)
 
 # Define joint limits (radians) - MUST MATCH YOUR ARM
 # For 3-DOF Planar (q_shoulder, q_elbow, q_wrist_pitch)
-JOINT_LIMITS_3DOF_ACTIVE = [(-np.pi / 2, np.pi / 2), (0, np.pi * 150 / 180), (-np.pi / 2, np.pi / 2)]
+JOINT_LIMITS_3DOF_ACTIVE = [(-np.pi / 4, np.pi / 4), (0, np.pi * (120 / 180)), (-np.pi / 2, np.pi / 2)]
 # For 4-DOF Spatial (q_base, q_shoulder, q_elbow, q_wrist_pitch)
-JOINT_LIMITS_4DOF_ACTIVE = [(-np.pi, np.pi), (-np.pi / 2, np.pi / 2), (0, np.pi * 150 / 180), (-np.pi / 2, np.pi / 2)]
+JOINT_LIMITS_4DOF_ACTIVE = [(0, np.pi * (120 / 180)), (-np.pi / 4, np.pi / 4), (0, np.pi * (120 / 180)), (-np.pi / 2, np.pi / 2)]
+
+
+
 
 
 def run_evaluation_pipeline(
@@ -193,8 +196,8 @@ def plot_summary_results(df_results, save_dir):
 if __name__ == "__main__":
     print("Starting D-H Based Performance Evaluation Script...")
     # --- Parameters for the main test run ---
-    EPOCHS = 1000  # Increase for better NN training (e.g., 200-1000)
-    NUM_SAMPLES = 20000  # Increase for robust training (e.g., 50k-200k)
+    EPOCHS = 500  # Increase for better NN training (e.g., 200-1000)
+    NUM_SAMPLES = 50000  # Increase for robust training (e.g., 50k-200k)
 
     # NN Architectures (can be tuned)
     NN_ARCH_3DOF = (64, 64, 32)
