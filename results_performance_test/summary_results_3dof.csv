@@ -1,0 +1,4 @@
+Framework,Training Time (s),Mean Inference Time NN (ms),Mean Cartesian Error NN (mm),Max Cartesian Error NN (mm),Accuracy NN <0.5mm (%),Mean Inference Time NR (ms),Mean Cartesian Error NR (mm),Max Cartesian Error NR (mm),Accuracy NR <0.5mm (%)
+tensorflow,568.3125884532928,63.75635635852814,154.62369325988496,496.6849575380021,0.01,,,,
+pytorch,95.68249607086182,0.7746812105178833,155.6216039531239,499.1463822672848,0.02,,,,
+sklearn,15.565057039260864,0.3116783142089844,147.80094311337535,496.5687492582346,0.0,,,,
