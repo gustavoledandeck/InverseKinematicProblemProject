@@ -628,7 +628,7 @@ class ScikitLearnModel:
     """
 
     def __init__(self, input_dimension, output_dimension,
-                 hidden_layer_sizes=(512, 256),
+                 hidden_layer_sizes=(128, 64),
                  activation='relu',
                  alpha=0.0001,
                  solver='lbfgs',
