@@ -33,14 +33,14 @@ class DataGeneratorDH:
                 self.limits = [
                     (-np.pi / 4, np.pi / 4),  # q2_shoulder (e.g., -45 to +45 deg)
                     (0, np.pi * (120 / 180)),  # q3_elbow (e.g., 0 to 120 deg)
-                    (-np.pi / 2, np.pi / 2)  # q4_wrist_pitch
+                    (-np.pi * (60 / 180), np.pi * (60 / 180))  # q4_wrist_pitch
                 ]
             elif self.num_dof == 4:  # Base, Shoulder, Elbow, Wrist_Pitch
                 self.limits = [
                     (0, np.pi * (120 / 180)),  # q1_base (e.g., 0 to +120 deg)
                     (-np.pi / 4, np.pi / 4),  # q2_shoulder
                     (0, np.pi * (120 / 180)),  # q3_elbow
-                    (-np.pi / 2, np.pi / 2)  # q4_wrist_pitch
+                    (-np.pi * (60 / 180), np.pi * (60 / 180))  # q4_wrist_pitch
                 ]
             else:
                 raise ValueError("num_dof must be 3 or 4 for this generator.")
@@ -76,6 +76,7 @@ class DataGeneratorDH:
                    X_data: numpy array of shape (num_samples, 3) for EE positions (x,y,z).
                    y_data: numpy array of shape (num_samples, num_dof) for joint angles.
         """
+
         if self.num_dof == 3 and fixed_base_rotation_for_3dof_rad is None:
             print(
                 "Warning: Generating 3-DOF data. `fixed_base_rotation_for_3dof_rad` is None. Assuming 0.0 for FK calculation if needed by FK method.")
@@ -91,7 +92,7 @@ class DataGeneratorDH:
                 # FK for 3-DOF planar takes 3 angles (sh,elb,wr) + fixed base rotation
                 ee_pos = self.fk_model.forward_kinematics_3dof_planar(
                     joint_angles,  # These are q2, q3, q4
-                    base_rotation_rad=fixed_base_rotation_for_3dof_rad
+                    fixed_q1_base_rotation_rad=fixed_base_rotation_for_3dof_rad
                 )
                 y_data.append(joint_angles)  # Store the 3 active joint angles
             elif self.num_dof == 4:
@@ -116,6 +117,15 @@ class DataGeneratorDH:
 
 # Example Usage
 if __name__ == '__main__':
+    # Convert degrees to radians for the generator
+    # Base (q1): 0 to 180 deg; Shoulder (q2): -45 to +45 deg; Elbow (q3): 0 to 120 deg; Wrist (q4): -90 to +90 deg
+    realistic_limits_4dof_deg = [(0, 180), (-45, 45), (0, 120), (-90, 90)]
+    realistic_limits_4dof_rad = [(np.deg2rad(lim[0]), np.deg2rad(lim[1])) for lim in realistic_limits_4dof_deg]
+
+    # For 3-DOF (e.g., q2, q3, q4 of the 4-DOF structure):
+    realistic_limits_3dof_deg = [(-45, 45), (0, 120), (-90, 90)]  # Shoulder, Elbow, Wrist
+    realistic_limits_3dof_rad = [(np.deg2rad(lim[0]), np.deg2rad(lim[1])) for lim in realistic_limits_3dof_deg]
+
     # CRITICAL: Use the same link parameters as in ForwardKinematicsDH for consistency
     fk_dh = ForwardKinematicsDH(d1=70.0, a2=100.0, a3=100.0, a4=60.0)
 
@@ -127,13 +137,13 @@ if __name__ == '__main__':
         (0, np.pi * (120 / 180)),  # Elbow pitch (e.g. 0 to 150 deg)
         (-np.pi / 2, np.pi / 2)  # Wrist pitch
     ]
-    data_gen_3dof = DataGeneratorDH(fk_dh_model=fk_dh, num_dof=3, joint_angle_limits=limits_3dof)
+    data_gen_3dof = DataGeneratorDH(fk_dh_model=fk_dh, num_dof=3, joint_angle_limits=realistic_limits_3dof_rad)
     # For 3-DOF planar, specify the fixed base rotation (q1)
     X3, y3 = data_gen_3dof.generate_data(num_samples=5, fixed_base_rotation_for_3dof_rad=np.deg2rad(0))
     print("\n--- 3-DOF Planar Data (Base fixed at 0 deg) ---")
     for i in range(len(X3)):
         print(f"Joints (deg): {[f'{np.degrees(a):.1f}' for a in y3[i]]} -> EE Pos (mm): {[f'{p:.2f}' for p in X3[i]]}")
-
+    """
     # --- 4-DOF Spatial Data Generation ---
     # Define joint limits for the 4 active joints (base, shoulder, elbow, wrist_pitch)
     # Example: q1_base, q2_shoulder, q3_elbow, q4_wrist
@@ -143,7 +153,8 @@ if __name__ == '__main__':
         (0, np.pi * (120 / 180)),  # Elbow pitch
         (-np.pi / 2, np.pi / 2)  # Wrist pitch
     ]
-    data_gen_4dof = DataGeneratorDH(fk_dh_model=fk_dh, num_dof=4, joint_angle_limits=limits_4dof)
+    """
+    data_gen_4dof = DataGeneratorDH(fk_dh_model=fk_dh, num_dof=4, joint_angle_limits=realistic_limits_4dof_rad)
     X4, y4 = data_gen_4dof.generate_data(num_samples=5)
     print("\n--- 4-DOF Spatial Data ---")
     for i in range(len(X4)):
