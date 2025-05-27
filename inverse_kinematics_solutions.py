@@ -15,6 +15,73 @@ from utils.data_for_simulation import DataGeneratorDH
 from models.neural_network import TensorFlowModel, PyTorchModel, ScikitLearnModel
 
 
+class NewtonRaphson_IK:
+    def __init__(self, fk_function, jacobian_function, num_dof, joint_limits_rad=None,
+                 orientation_dof_indices=None):
+        self.fk_function = fk_function
+        self.jacobian_function = jacobian_function
+        self.num_dof = num_dof
+        self.joint_limits_rad = np.array(joint_limits_rad) if joint_limits_rad is not None else None
+        self.orientation_dof_indices = orientation_dof_indices if orientation_dof_indices is not None else []
+
+    def _calculate_error(self, current_pose, target_pose):
+        error = np.array(target_pose) - np.array(current_pose)
+        for i in self.orientation_dof_indices:
+            while error[i] > np.pi: error[i] -= 2 * np.pi
+            while error[i] < -np.pi: error[i] += 2 * np.pi
+        return error
+
+    def solve(self, target_pose, initial_joint_angles_rad,
+              max_iterations=100, position_tolerance=1e-4, orientation_tolerance_rad=1e-3,
+              step_size_alpha=0.5, damping_lambda=0.01):
+        q_current = np.array(initial_joint_angles_rad, dtype=float)
+        target_pose = np.array(target_pose, dtype=float)
+
+        if self.joint_limits_rad is not None:
+            q_current = np.clip(q_current, self.joint_limits_rad[:, 0], self.joint_limits_rad[:, 1])
+
+        for i in range(max_iterations):
+            current_pose = self.fk_function(q_current)
+            error = self._calculate_error(current_pose, target_pose)
+
+            pos_error_norm = np.linalg.norm(error[:3])
+            orient_error_norm = 0.0
+            if len(error) > 3 and self.orientation_dof_indices:
+                orient_error_components = error[np.array(self.orientation_dof_indices)]
+                orient_error_norm = np.linalg.norm(orient_error_components)
+            final_error_norm = np.linalg.norm(error)
+
+            if pos_error_norm < position_tolerance and \
+                    (
+                            len(error) <= 3 or not self.orientation_dof_indices or orient_error_norm < orientation_tolerance_rad):
+                return q_current, True, i + 1, final_error_norm
+
+            J = self.jacobian_function(q_current)
+            try:
+                if damping_lambda > 1e-9:  # Apply DLS
+                    J_JT = J @ J.T
+                    identity_matrix = np.eye(J_JT.shape[0])
+                    # Ensure J_JT is invertible or regularized
+                    J_pinv = J.T @ np.linalg.solve(J_JT + (damping_lambda ** 2) * identity_matrix,
+                                                   np.eye(J_JT.shape[0]))
+                else:  # Standard pseudo-inverse
+                    J_pinv = np.linalg.pinv(J)
+                delta_q = J_pinv @ error
+            except np.linalg.LinAlgError:
+                return q_current, False, i + 1, final_error_norm
+
+            q_new = q_current + step_size_alpha * delta_q
+            if self.joint_limits_rad is not None:
+                q_new = np.clip(q_new, self.joint_limits_rad[:, 0], self.joint_limits_rad[:, 1])
+
+            if np.linalg.norm(q_new - q_current) < 1e-6 * self.num_dof:
+                current_pose_final = self.fk_function(q_current)
+                error_final = self._calculate_error(current_pose_final, target_pose)
+                return q_current, True, i + 1, np.linalg.norm(error_final)
+            q_current = q_new
+
+        return q_current, False, max_iterations, final_error_norm
+
 class InverseKinematicsBase:
     """Base class for IK solvers."""
 
@@ -186,7 +253,7 @@ class InverseKinematics3DOFPlanar(InverseKinematicsBase):
         # FK for 3-DOF planar takes 3 angles (sh,elb,wr) + fixed base rotation
         x_pred, y_pred, z_pred = self.fk_model.forward_kinematics_3dof_planar(
             predicted_3dof_angles_rad,
-            base_rotation_rad=self.fixed_base_rotation_rad
+            fixed_q1_base_rotation_rad=self.fixed_base_rotation_rad
         )
         target_pos = np.array(target_ee_pose_mm).flatten()
         error = np.sqrt(
@@ -233,6 +300,9 @@ class InverseKinematics4DOFSpatial(InverseKinematicsBase):
         self.data_generator = DataGeneratorDH(fk_dh_model=self.fk_model, num_dof=4,
                                               joint_angle_limits=default_limits_4dof)
 
+        self.nr_solver_instance = None  # Initialize to None
+        self.initialize_nr_solver(joint_angle_limits)  # Call initialization
+
     def generate_training_data(self, num_samples=20000):
         print(f"Generating {num_samples} training samples for 4-DOF spatial model...")
         X_ee_poses, y_4dof_angles = self.data_generator.generate_data(num_samples)
@@ -250,39 +320,41 @@ class InverseKinematics4DOFSpatial(InverseKinematicsBase):
         )
         return error
 
-    def newton_raphson_minimization(self, target_pos_mm, initial_angles_rad, max_iter=100, tol_mm=1e-3,
-                                    learning_rate=0.1):
-        """Refines joint angles using Newton-Raphson for 4-DOF spatial arm."""
-        angles = np.array(initial_angles_rad, dtype=float)
-        target_pos_mm = np.array(target_pos_mm, dtype=float)
+    def initialize_nr_solver(self, active_joint_limits_rad):
+        """Initializes the NR solver instance."""
+        if active_joint_limits_rad is None: # Fallback if not passed during __init__
+            # Get from data_generator if available, or use defaults
+            if hasattr(self, 'data_generator') and self.data_generator:
+                active_joint_limits_rad = self.data_generator.limits
+            else: # Absolute fallback, should be defined better
+                active_joint_limits_rad = [(-np.pi, np.pi)] * self.num_model_dof
+                print("Warning: NR using default wide joint limits.")
 
-        for iteration in range(max_iter):
-            current_pos_mm = np.array(self.fk_model.forward_kinematics_4dof_spatial(angles))
-            error_vec_mm = target_pos_mm - current_pos_mm
-            current_error_mm = np.linalg.norm(error_vec_mm)
+        self.nr_solver_instance = NewtonRaphson_IK(
+            fk_function=self.fk_model.forward_kinematics_4dof_spatial,
+            jacobian_function=self.fk_model.jacobian_4dof_spatial, # CRITICAL: This must be analytical
+            num_dof=self.num_model_dof, # Should be 4
+            joint_limits_rad=active_joint_limits_rad,
+            orientation_dof_indices=[] # If your 4-DOF IK targets only [x,y,z] for the NN
+        )
+        print(f"4-DOF NR solver initialized. Ensure fk_model.jacobian_4dof_spatial is implemented analytically.")
 
-            if current_error_mm < tol_mm:
-                break
+    def refined_predict_with_nr(self, target_pos_mm, initial_nn_angles_rad,
+                                max_iter=50, tol_mm=0.1, learning_rate_nr=0.5, damping_nr=0.01):
+        if self.nr_solver_instance is None:
+            print("Error: NR solver not initialized. Call initialize_nr_solver first or ensure it's called in __init__.")
+            return initial_nn_angles_rad # Fallback
 
-            jacobian = np.zeros((3, self.num_model_dof))  # 3D position, N=num_model_dof angles
-            epsilon = 1e-6
-            for j in range(self.num_model_dof):  # Iterate through the 4 DOFs
-                angles_perturbed = angles.copy()
-                angles_perturbed[j] += epsilon
-                pos_perturbed_mm = np.array(self.fk_model.forward_kinematics_4dof_spatial(angles_perturbed))
-                jacobian[:, j] = (pos_perturbed_mm - current_pos_mm) / epsilon
-
-            try:  # Damped Least Squares
-                lambda_damping = 0.01
-                delta_angles = np.linalg.inv(
-                    jacobian.T @ jacobian + lambda_damping * np.eye(self.num_model_dof)) @ jacobian.T @ error_vec_mm
-                angles += learning_rate * delta_angles
-            except np.linalg.LinAlgError:
-                angles += np.random.uniform(-0.005, 0.005, self.num_model_dof)  # Smaller random step
-        else:  # No break from loop
-            # print(f"NR 4DOF did not converge. Final error: {current_error_mm:.4f} mm")
-            pass
-        return angles
+        q_refined, success, iters, final_err = self.nr_solver_instance.solve(
+            target_pose=np.array(target_pos_mm),
+            initial_joint_angles_rad=np.array(initial_nn_angles_rad),
+            max_iterations=max_iter,
+            position_tolerance=tol_mm,
+            orientation_tolerance_rad=1e-3, # Adjust if orientation is part of target_pose
+            step_size_alpha=learning_rate_nr,
+            damping_lambda=damping_nr
+        )
+        return q_refined
 
     def visualize_prediction(self, target_ee_pose_mm, predicted_4dof_angles_rad):
         achieved_pos = self.fk_model.forward_kinematics_4dof_spatial(predicted_4dof_angles_rad)
@@ -294,6 +366,7 @@ class InverseKinematics4DOFSpatial(InverseKinematicsBase):
             f'4-DOF Spatial Arm ({self.model_type})\nTarget: {np.array(target_ee_pose_mm).round(1)} mm\nAchieved: {np.array(achieved_pos).round(1)} mm\nCartesian Error: {error:.3f} mm',
             fontsize=10)
         return fig
+
 
 
 if __name__ == '__main__':
